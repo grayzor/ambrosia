@@ -1,0 +1,371 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <title>Îlot — prévisualisation</title>
+  <!-- Resolve relative paths (logos…) exactly like src/renderer/index.html does -->
+  <base href="/src/renderer/">
+  <link rel="stylesheet" href="style.css">
+  <style>
+    /* dev only: a desktop-ish backdrop, and the island page sized like the real window */
+    html, body { background: #3a3f4b !important; }
+    body { width: 760px; height: 600px; margin: 0 auto; position: relative; }
+    #bar { position: fixed; left: 8px; bottom: 8px; font: 12px "Segoe UI"; color: #ddd; }
+    #bar button { margin-right: 4px; }
+  </style>
+</head>
+<body>
+  <!-- Same markup as src/renderer/index.html -->
+  <div id="island" class="mode-notch">
+    <i class="ear left"></i><i class="ear right"></i>
+    <canvas id="gany"></canvas>
+    <div id="notch-row"></div>
+    <div id="peek">
+      <div class="peek-body">
+        <div class="peek-title"></div>
+        <div class="peek-text"></div>
+      </div>
+      <div class="peek-actions"></div>
+    </div>
+    <div id="open">
+      <div id="open-inner">
+        <header id="head">
+          <div class="hello">
+            <div class="hello-title">Gany</div>
+            <div class="hello-sub"></div>
+          </div>
+          <div class="tools"></div>
+        </header>
+        <nav id="tabs"></nav>
+        <section id="panel"></section>
+      </div>
+    </div>
+  </div>
+  <div id="bar"></div>
+
+  <!-- A fake window.ambrosia: fixtures instead of the main process.
+       dev/island.html?open=agenda opens a module; ?alert=late shows the meeting alarm. -->
+  <!-- The real « en appel » logic of the main process (plain script: window.AmbrosiaCallMode) -->
+  <script src="/src/main/call-mode.js"></script>
+  <script type="module">
+    const MIN = 60000;
+    const now = Date.now();
+    const meeting = (id, title, startIn, dur, extra = {}) => ({
+      id, title, startMs: now + startIn * MIN, endMs: now + (startIn + dur) * MIN, attendees: 5, selfResponse: 'accepted',
+      meetUrl: 'https://meet.google.com/abc-defg-hij', location: '', phase: 'later', joined: false, acked: false, ...extra,
+    });
+    // A meeting brief as src/modules/agenda/brief.js sanitize() returns it.
+    const BRIEF = {
+      objet: 'Valider le format de reprise des stocks Aurore vers l’ERP avant la répétition du 20/10.',
+      contexte: [
+        'Léa a partagé deux formats de fichier (ERP et extraction Pégase) dans ATLAS / Bascule.',
+        'Question ouverte à toi et Karim : D01 + B01 suffisent-ils pour la reprise ?',
+        'Sophie a mis à jour l’invitation hier avec la description complète.',
+      ],
+      participants: [
+        { nom: 'Léa Martin', role: 'Organisatrice, cheffe de projet ATLAS', dernierEchange: '9 oct. · Re: références OMS' },
+        { nom: 'Karim Benali', role: 'Data engineer', dernierEchange: '' },
+        { nom: 'Sophie Bernard', role: '', dernierEchange: '11 oct. · invitation mise à jour' },
+      ],
+      documents: [
+        { titre: 'Format de fichier ERP Reprise Stock Boutiques Aurore', url: 'https://docs.google.com/spreadsheets/d/example1' },
+        { titre: 'Notes - Sync ERP + ATLAS Questions', url: 'https://docs.google.com/document/d/example2' },
+      ],
+      taches: [
+        { titre: '[ATLAS-1325] Table ventes_oms__s - Analyse commande OMS', url: 'https://app.clickup.com/t/example', statut: 'in progress' },
+      ],
+      aPreparer: ['Confirmer que les stocks réservés et en transit seront bien à 0.', 'Le format d’extraction Pégase est-il jouable d’ici le 20/10 ?'],
+    };
+    const q0 = new URLSearchParams(location.search); // ?via=mails: Google Chat on its fallback
+    const fixtures = {
+      modules: [
+        { id: 'claude', name: 'Claude', icon: '✦', logo: 'icons/claude.svg', color: '#E08A5F', order: 10, hasView: true, dir: 'claude', enabled: true, settings: [] },
+        { id: 'agenda', name: 'Agenda', icon: '◷', logo: 'icons/calendar.svg', color: '#F2A65A', order: 15, hasView: true, dir: 'agenda', enabled: true, settings: [] },
+        { id: 'mail', name: 'Courrier', icon: '✉', logo: 'icons/gmail.svg', color: '#E8B923', order: 20, hasView: true, dir: 'mail', enabled: true, settings: [] },
+        { id: 'gchat', name: 'Google Chat', icon: '❝', logo: 'icons/gchat.svg', color: '#1E9E57', order: 22, hasView: true, dir: 'gchat', enabled: true, settings: [] },
+        { id: 'clickup', name: 'ClickUp', icon: '✓', logo: 'icons/clickup.svg', color: '#7B68EE', order: 25, hasView: true, dir: 'clickup', enabled: true, settings: [] },
+        { id: 'drive', name: 'Drive', icon: '✎', logo: 'icons/drive.svg', color: '#2684FC', order: 27, hasView: true, dir: 'drive', enabled: true, settings: [] },
+        { id: 'chat', name: 'Demander', icon: '☉', logo: '../../assets/icon.png', color: '#B79CFF', order: 30, hasView: true, dir: 'chat', enabled: true, settings: [] },
+      ],
+      states: {
+        claude: { sessions: [], pending: [], hooksInstalled: true },
+        agenda: {
+          status: 'ok', fetchedAt: now - 4 * MIN, ignored: 3, trophy: 3, streak: 3, selfName: 'Camille',
+          today: { count: 6, firstStart: now + 30 * MIN, joined: 2, onTime: 2, missed: 0 },
+          meetings: [
+            meeting('a', 'ATLAS - prio de la journée', -6, 15, { phase: 'late', attendees: 7 }),
+            meeting('b', 'Reprise de stock', 2, 45, { phase: 'soon', attendees: 9, brief: { status: 'ok', at: now - 11 * MIN, brief: BRIEF } }),
+            meeting('c', 'ATLAS - Débrief Plan de Bascule', 90, 30, { selfResponse: 'needsAction' }),
+            meeting('d', 'Point présentiel', 150, 30, { meetUrl: '', location: 'Salle 3' }),
+          ],
+          mood: { name: 'meeting-late', priority: 99 },
+        },
+        mail: { status: 'ok', lastCheck: now - 3 * MIN, unread: 3, stats: { checked: 12, important: 3 }, items: [
+          { id: 'm1', title: 'Point budget : dispo jeudi ?', from: 'Claire Martin <claire.martin@corp.fr>', verdict: 'important', reason: 'Question directe', summary: 'Confirmer sa présence jeudi 14 h', url: 'https://mail.google.com/x', at: now - 4 * MIN, read: false,
+            proposal: { kind: 'reply', headline: 'Gany a rédigé une réponse', ask: 'Claire te demande si tu es disponible jeudi à 14 h pour le point budget.', analysis: 'Ton agenda est libre jeudi de 13 h 30 à 16 h.',
+              read: { from: 'Claire Martin', date: 'lun. 10:42', text: 'Bonjour Camille,\nEs-tu disponible jeudi à 14h pour faire le point sur le budget 2027 ? Une heure devrait suffire.\nMerci,\nClaire' },
+              text: { label: 'Réponse proposée', value: 'Bonjour Claire,\n\nOui, jeudi 14 h me convient très bien. Je bloque le créneau.\n\nCamille' },
+              actions: [{ act: 'send', label: 'Envoyer', primary: true, usesText: true }, { act: 'draft', label: 'En brouillon', usesText: true }] } },
+          { id: 'm2', title: 'Invitation au comité ATLAS ?', from: 'Théo Blanc <theo@corp.fr>', verdict: 'important', reason: 'Demande d’invitation', summary: '', url: 'https://mail.google.com/y', at: now - 30 * MIN, read: true,
+            applied: { invite: { ok: true, at: now - 60000 } },
+            proposal: { kind: 'invite', headline: 'Inviter theo@corp.fr à « Comité ATLAS » (mar. 14 oct., 10:00)', ask: 'Théo demande à être ajouté au comité de mardi.', analysis: '',
+              read: { from: 'Théo Blanc', date: 'lun. 09:12', text: 'Salut, tu peux m’ajouter au comité de mardi ?' },
+              text: { label: 'Et lui répondre', value: 'C’est fait, je t’ai ajouté.\n\nCamille' },
+              actions: [{ act: 'invite', label: 'Inviter', primary: true }, { act: 'send', label: 'Répondre', usesText: true }, { act: 'draft', label: 'En brouillon', usesText: true }] } },
+          { id: 'm3', title: 'Export Mnémosyne : "colonnes" & formats | 100 % ^ urgent', from: 'Thomas Bernard <thomas.bernard@example.com>', context: 'Boîte de réception', verdict: 'important', reason: 'Demande directe, échéance demain', summary: 'Corriger l’export avant la recette de jeudi', url: 'https://mail.google.com/mail/u/0/#inbox/abc', at: now - 12 * MIN, read: false },
+        ] },
+        clickup: { status: 'ok', lastCheck: now - 5 * MIN, unread: 2, stats: { checked: 4, important: 2 }, items: [
+          { id: 'c1', title: '[DATA-666] Anonymisation Mnémosyne', from: 'Julie Petit', context: 'Recette', verdict: 'urgent', reason: '@mention, risque prod', summary: 'Vérifier avant la prod', url: 'https://app.clickup.com/t/x', at: now - 20 * MIN, read: false,
+            proposal: { kind: 'clickup', headline: 'Gany a préparé une réponse', ask: 'Julie demande si l’anonymisation Mnémosyne est couverte avant la mise en prod.', analysis: 'La mémoire HelpDesk indique que clients__s et commandes__s partagent client_id ; l’anonymisation ne couvre pas avis__s.', plan: 'Dans HelpDesk : vérifier dans BigQuery les colonnes nominatives restantes de avis__s.',
+              read: { from: 'Julie Petit', date: '', text: '@Camille tu confirmes que l’anonymisation couvre bien toutes les tables avant vendredi ?' },
+              text: { label: 'Commentaire proposé', value: '[@Julie Petit](#user_mention#1) pas encore : avis__s n’a que client_id, il faut passer par la table de liaison. Je vérifie les colonnes restantes et je reviens vers toi demain.' },
+              actions: [{ act: 'comment', label: 'Répondre', primary: true, usesText: true }, { act: 'status', label: 'Passer en « in progress »' }, { act: 'handoff', label: 'Traiter dans HelpDesk' }] } },
+          { id: 'c2', title: '[DATA-753] Adresse de facturation', from: 'Emma Roux', context: 'Réalisation', verdict: 'important', reason: 'Le métier demande', summary: 'Traiter avec Hugo Garnier', url: 'https://app.clickup.com/t/y', at: now - 50 * MIN, read: false },
+        ] },
+        gchat: { status: 'ok', lastCheck: now - 2 * MIN, via: q0.get('via') === 'mails' ? 'Google refuse l’accès au connecteur Chat : Gany lit les mails de rappel de Chat (avec retard) et réessaie toutes les heures.' : null, unread: 2, stats: { checked: 23, important: 3 }, items: [
+          { id: 'spaces/D1/messages/m1', title: 'Tu peux valider le mapping des pays avant 14 h ?', from: 'Chloé Lambert', context: 'Message direct', verdict: 'urgent', reason: 'Validation attendue aujourd’hui', summary: 'Valider le mapping avant la recette', url: 'https://chat.google.com/dm/D1', at: now - 8 * MIN, read: false, messages: 3 },
+          { id: 'spaces/S1/messages/m2', title: '@Camille on garde le nom de table actuel ou on renomme ?', from: 'Hugo Bernard', context: 'Projet Data', verdict: 'important', reason: '@mention avec une question', summary: 'Trancher le nom de la table', url: 'https://chat.google.com/room/S1/t1', at: now - 35 * MIN, read: false },
+          { id: 'spaces/D2/messages/m3', title: 'Le point de demain est décalé à 10 h, ça te va ?', from: 'Inès Moreau', context: 'Message direct', verdict: 'important', reason: 'Attend une réponse', summary: 'Confirmer le nouvel horaire', url: 'https://chat.google.com/dm/D2', at: now - 70 * MIN, read: true },
+        ] },
+        drive: { status: 'ok', lastCheck: now - 6 * MIN, unread: 2, stats: { checked: 7, important: 3 }, items: [
+          { id: 'n1', title: 'Spécifications du modèle de données', from: 'Chloé Lambert <chloe.lambert@example.com>', context: 'Tâche assignée', verdict: 'important', reason: 'Commentaire assigné, désaccord sur un nom', summary: '« Je préférerais web_ventes__s plutôt que ventes__s… »', url: 'https://docs.google.com/spreadsheets/d/x/edit?disco=AAA', at: now - 15 * MIN, read: false },
+          { id: 'n2', title: 'Plan de bascule', from: 'Hugo Bernard <hugo.bernard@example.com>', context: 'Mention', verdict: 'urgent', reason: '@mention, validation avant 17 h', summary: 'Valider la date de bascule', url: 'https://docs.google.com/document/d/y/edit?disco=BBB', at: now - 40 * MIN, read: false },
+          { id: 'n3', title: 'offer_item.csv', from: 'Inès Moreau <ines.moreau@example.com>', context: 'Demande d’accès', verdict: 'important', reason: 'Bloquée en attendant l’accès', summary: 'Partager le fichier ou refuser', url: 'https://drive.google.com/file/d/z/view', at: now - 3 * 60 * MIN, read: true },
+        ] },
+        chat: {},
+      },
+      settings: { general: { sounds: false }, island: { restDelay: 450, leaveDelay: 650 } },
+    };
+    // Modules with their own fixture file: dev/fixtures/<id>.js → { module, state(), action(name, payload), connect(send) }
+    const extra = {};
+    for (const id of ['report', 'launch', 'routines', 'claude', 'notify', 'agenda']) {
+      const f = (extra[id] = (await import(`/dev/fixtures/${id}.js`)).default);
+      const i = fixtures.modules.findIndex((m) => m.id === id);
+      if (i >= 0) fixtures.modules[i] = f.module;
+      else fixtures.modules.push(f.module);
+      fixtures.states[id] = f.state(fixtures.states[id]); // agenda completes the sample above
+    }
+    const handlers = {};
+    // A few module actions, faked so the brief can be tried in the browser.
+    const agenda = fixtures.states.agenda;
+    const setAgenda = (patch) => {
+      Object.assign(agenda, patch);
+      emit('state', { id: 'agenda', state: { ...agenda } });
+    };
+    const patchMeeting = (id, patch) => setAgenda({ meetings: agenda.meetings.map((m) => (m.id === id ? { ...m, ...patch } : m)) });
+    const fakeActions = {
+      'agenda.brief': ({ id }) => {
+        const prev = agenda.meetings.find((m) => m.id === id)?.brief;
+        patchMeeting(id, { brief: { ...(prev || {}), status: 'pending' } });
+        setTimeout(() => patchMeeting(id, { brief: { status: 'ok', at: Date.now(), brief: { ...BRIEF, objet: 'Brief d’exemple (dev) : ' + BRIEF.objet } } }), 1500);
+      },
+      'agenda.showBrief': ({ id }) => {
+        setAgenda({ focusBrief: { id, at: Date.now() } });
+        emit('expand', { id: 'agenda' });
+      },
+    };
+    // Automatic updates (src/main/updater.js): ?update=ready shows « Mettre à jour » in the header.
+    const UPDATE_READY = { mode: 'packaged', status: 'ready', running: '0.1.93', ready: '0.1.94', latest: '0.1.94', lastCheck: Date.now(), repo: 'grayzor/ambrosia' };
+    let update = new URLSearchParams(location.search).get('update') === 'ready' ? UPDATE_READY : { ...UPDATE_READY, status: 'uptodate', ready: null, latest: '0.1.93' };
+    window.ambrosia = {
+      on: (ch, fn) => ((handlers[ch] ||= []).push(fn), () => {}),
+      core: async (name, payload) => {
+        if (name === 'boot') return { ...fixtures, alerts: [], update, dev: true };
+        if (name === 'update') return update;
+        if (name === 'updateInstall') {
+          emit('update', (update = { ...update, status: 'installing' }));
+          setTimeout(() => emit('update', (update = { ...update, status: 'uptodate', running: update.ready, ready: null })), 1500);
+          return update;
+        }
+        if (name === 'dismissAlert') dismissAlert(payload);
+        return null;
+      },
+      action: async (id, name, payload) => {
+        console.log('action', id, name, payload);
+        // Triage cards: « Confier à Claude » marks the card, like src/main/triage.js.
+        if (name === 'delegated' && fixtures.states[id]?.items) {
+          const st = fixtures.states[id];
+          st.items = st.items.map((i) => (i.id === payload.id ? { ...i, read: true, delegatedAt: Date.now() } : i));
+          st.unread = st.items.filter((i) => !i.read).length;
+          emit('state', { id, state: { ...st } });
+        }
+        const fake = fakeActions[`${id}.${name}`];
+        return fake ? fake(payload || {}) : extra[id]?.action(name, payload);
+      },
+      send: () => {},
+    };
+    const emit = (ch, data) => (handlers[ch] || []).forEach((fn) => fn(data));
+    for (const [id, f] of Object.entries(extra)) f.connect?.((state) => emit('state', { id, state }), emit);
+    // ?launch=full|short|off: which entrance plays on load (default: none after the first load of the tab)
+    const q = new URLSearchParams(location.search);
+    if (q.get('launch')) {
+      sessionStorage.removeItem('ambrosia.launched');
+      if (q.get('launch') === 'full') localStorage.removeItem('ambrosia.launchDay');
+      else localStorage.setItem('ambrosia.launchDay', new Date().toDateString());
+      if (q.get('launch') === 'off') sessionStorage.setItem('ambrosia.launched', '1');
+    }
+    await import('/src/renderer/island.js');
+    setTimeout(() => {
+      if (q.get('alert') === 'late') {
+        emit('alerts', [{ key: 'a', module: 'agenda', pin: true, at: Date.now(), from: '09:15', title: 'Tu es en retard (6 min) : ATLAS - prio de la journée', text: 'Tu n’es pas connecté au Meet · 7 participants', mood: 'meeting-late', priority: 99,
+          actions: [{ label: 'Rejoindre', action: 'join', payload: { id: 'a' }, primary: true }, { label: 'Prévenir du retard', action: 'lateForm', payload: { id: 'a' }, dismiss: false }, { label: 'OK', action: 'ack', payload: { id: 'a' } }] }]);
+      }
+      if (q.get('alert') === 'proposal') {
+        emit('alerts', [{ key: 'p', module: 'mail', at: Date.now(), ttl: 600, from: '', title: 'Inviter Théo à « Comité ATLAS » ?', text: 'Inviter theo@corp.fr à « Comité ATLAS » (mar. 14 oct., 10:00) — Théo demande à être ajouté au comité de mardi.', mood: 'mail', priority: 60,
+          actions: [{ label: 'Inviter', action: 'apply', primary: true }, { label: 'Voir', action: 'show' }] }]);
+      }
+      if (q.get('alert') === 'brief') {
+        emit('alerts', [{ key: 'agenda:b', module: 'agenda', pin: true, at: Date.now(), from: '11:30', title: 'Dans 2 min : Reprise de stock', text: 'Meet · 9 participants', mood: 'meeting-soon', priority: 85,
+          actions: [{ label: 'Rejoindre', action: 'join', payload: { id: 'b' }, primary: true }, { label: 'Me voir', action: 'mirror', payload: { id: 'b' }, dismiss: false }, { label: 'Brief', action: 'showBrief', payload: { id: 'b' }, dismiss: false }, { label: 'OK', action: 'ack', payload: { id: 'b' } }] }]);
+      }
+      // A fixture may provide its own alert: dev/fixtures/<id>.js alert(name)
+      for (const f of Object.values(extra)) {
+        const a = q.get('alert') && f.alert?.(q.get('alert'));
+        if (a) emit('alerts', [a]);
+      }
+      if (q.get('open')) emit('expand', { id: q.get('open') });
+    }, q.get('launch') === 'full' ? 4300 : 2000); // after the entrance
+    const bar = document.getElementById('bar');
+    for (const id of new Set(['agenda', 'mail', 'gchat', 'clickup', 'drive', 'claude', ...Object.keys(extra).filter((k) => extra[k].module.hasView !== false)])) {
+      const b = Object.assign(document.createElement('button'), { textContent: id, onclick: () => emit('expand', { id }) });
+      bar.append(b);
+    }
+    bar.append(document.createElement('br'));
+    // A fixture's own buttons: dev/fixtures/<id>.js → buttons: [[label, fn]]
+    for (const f of Object.values(extra)) {
+      for (const [label, fn] of f.buttons || []) bar.append(Object.assign(document.createElement('button'), { textContent: label, onclick: fn }));
+    }
+
+    bar.append(Object.assign(document.createElement('button'), { textContent: 'mise à jour prête', onclick: () => emit('update', (update = { ...UPDATE_READY, running: update.running, ready: '0.1.' + (Number(update.running.split('.')[2]) + 1) })) }));
+
+    // « En appel » : the same queue as the module host (src/main/modules.js → call-mode.js).
+    const call = new window.AmbrosiaCallMode.CallMode(() => ({}));
+    const RECAP = { mail: { name: 'Courrier', recap: { one: 'mail', many: 'mails' } }, clickup: { name: 'ClickUp', recap: { one: 'interaction ClickUp', many: 'interactions ClickUp' } }, claude: { name: 'Claude', recap: { one: 'message de Claude Code', many: 'messages de Claude Code' } } };
+    let shown = [];
+    function pushAlert(alert) {
+      const a = call.admit(alert);
+      if (a) {
+        shown = shown.filter((x) => x.key !== a.key).concat({ ttl: 9, at: Date.now(), ...a });
+        emit('alerts', shown);
+      }
+      emit('call', call.status());
+    }
+    function dismissAlert(key) {
+      call.dismiss(key);
+      shown = shown.filter((x) => x.key !== key);
+      emit('call', call.status());
+    }
+    let n = 0;
+    for (const [label, fn] of [
+      ['en appel', () => { call.set('agenda', { title: 'ATLAS - prio de la journée' }); emit('call', call.status()); }],
+      ['+ mail', () => pushAlert({ key: `mail:m${++n}`, module: 'mail', from: 'Sophie Bernard', title: `Reprise des stocks (${n})`, text: 'Peux-tu confirmer le format ?', mood: 'mail', sound: 'mail', priority: 60, ttl: 14 })],
+      ['+ ClickUp', () => pushAlert({ key: `clickup:c${++n}`, module: 'clickup', from: 'Julie Petit', title: '[DATA-666] Anonymisation Mnémosyne', text: '@Camille : vérifier avant la prod', mood: 'mail', sound: 'mail', priority: 80, ttl: 30 })],
+      ['+ approbation', () => pushAlert({ key: `claude:p${++n}`, module: 'claude', title: 'ambrosia demande : Bash', text: 'npm test', mood: 'approval', sound: 'approval', priority: 100, ttl: 2 })],
+      ['fin d’appel', () => {
+        if (call.set('agenda', null) === 'end') {
+          const recap = call.flush((id) => RECAP[id]);
+          if (recap) pushAlert({ ...recap, key: 'core:call-recap' });
+        }
+        emit('call', call.status());
+      }],
+    ]) {
+      bar.append(Object.assign(document.createElement('button'), { textContent: label, onclick: fn }));
+    }
+    bar.append(document.createElement('br'));
+    // Windows (src/main/system.js, main.js « Windows integration »): what the main process would send.
+    const system = { locked: false, fullscreen: null, dnd: false };
+    const setSystem = (patch, source, info) => {
+      Object.assign(system, patch);
+      if (source && call.set(source, info) === 'end') {
+        const recap = call.flush((id) => RECAP[id]);
+        if (recap) pushAlert({ ...recap, key: 'core:call-recap' });
+      }
+      emit('system', { ...system });
+      emit('call', call.status());
+    };
+    const dragFile = (type) => {
+      const dt = new DataTransfer();
+      dt.items.add(new File(['Bon de commande'], 'commande-octobre.pdf', { type: 'application/pdf' }));
+      document.dispatchEvent(new DragEvent(type, { dataTransfer: dt, bubbles: true, cancelable: true }));
+    };
+    for (const [label, fn] of [
+      ['plein écran', () => setSystem({ fullscreen: 'fullscreen' }, 'core:fullscreen', { title: 'Plein écran', recapLead: 'Pendant ton plein écran', always: true, kind: 'fullscreen' })],
+      ['fin du plein écran', () => setSystem({ fullscreen: null }, 'core:fullscreen', null)],
+      ['session verrouillée', () => setSystem({ locked: true }, 'core:lock', { title: 'Session verrouillée', recapLead: 'Pendant ton absence', always: true, kind: 'lock' })],
+      ['déverrouillage', () => setSystem({ locked: false }, 'core:lock', null)],
+      ['fichier qui approche', () => dragFile('dragenter')],
+      ['fichier reparti', () => emit('drop-armed', false)],
+      ['« Ne pas déranger »', () => {
+        setState('gany', { focus: { until: Date.now() + 12 * 60 * MIN, dnd: true } });
+        setSystem({ dnd: true }, 'gany', { title: 'Ne pas déranger', recapLead: 'Pendant ton « Ne pas déranger »', always: true, kind: 'focus' });
+      }],
+      ['fin « Ne pas déranger »', () => {
+        setState('gany', { focus: null });
+        setSystem({ dnd: false }, 'gany', null);
+      }],
+    ]) {
+      bar.append(Object.assign(document.createElement('button'), { textContent: label, onclick: fn }));
+    }
+    bar.append(document.createElement('br'));
+    // Gany's entrance, as the right-click menu replays it
+    for (const [label, kind] of [['arrivée', 'full'], ['arrivée courte', 'short']]) {
+      bar.append(Object.assign(document.createElement('button'), { textContent: label, onclick: () => emit('launch', { kind }) }));
+    }
+    // Gany's reactions, as modules send them (ctx.react)
+    for (const [label, data] of [
+      ['confettis', { mood: 'finished', ms: 2600, confetti: true }],
+      ['clin d’œil', { mood: 'wink', ms: 2600 }],
+      ['soulagement', { mood: 'relief', ms: 2800 }],
+      ['déjeuner', { mood: 'lunch', ms: 4000 }],
+      ['bâillement', { mood: 'yawn', ms: 3000 }],
+      ['coup d’œil', null],
+    ]) {
+      const b = Object.assign(document.createElement('button'), {
+        textContent: label,
+        onclick: () => (data ? emit('react', data) : emit('glance', { x: 700, y: 400 })),
+      });
+      bar.append(b);
+    }
+    // Gany's character (src/modules/gany, island.js « Gany's character »)
+    bar.append(document.createElement('br'));
+    const setState = (id, patch) => emit('state', { id, state: (fixtures.states[id] = { ...fixtures.states[id], ...patch }) });
+    for (const [label, fn] of [
+      ['approbation qui attend (6 min)', () => {
+        const at = Date.now() - 6 * MIN;
+        setState('claude', { pending: [{ rid: 1, kind: 'approval', project: 'ambrosia', toolLabel: 'Bash', target: 'npm test', at }], mood: { name: 'approval', priority: 100 } });
+        emit('expand', { id: 'claude', pin: true });
+      }],
+      ['approuvée', () => { setState('claude', { pending: [], mood: null }); emit('unpin', { id: 'claude' }); }],
+      ['pause : s’étirer', () => pushAlert({ key: 'gany:break', module: 'gany', title: 'Une petite pause ?', text: '1 h 30 que tu enchaînes : lève-toi, étire-toi une minute.', mood: 'stretch', priority: 25, ttl: 12 })],
+      ['concentration 25 min', () => {
+        call.set('gany', { title: 'Concentration', recapLead: 'Pendant ta concentration', always: true });
+        setState('gany', { focus: { until: Date.now() + 25 * MIN } });
+        emit('call', call.status());
+      }],
+      ['fin de concentration', () => {
+        setState('gany', { focus: null });
+        if (call.set('gany', null) === 'end') {
+          const recap = call.flush((id) => RECAP[id]);
+          if (recap) pushAlert({ ...recap, key: 'core:call-recap' });
+        }
+        emit('call', call.status());
+      }],
+      ['Olympe en ordre', () => {
+        setState('agenda', { mood: null });
+        pushAlert({ key: 'gany:clear', module: 'gany', title: 'L’Olympe est en ordre !', text: '6 sujets traités, plus rien ne t’attend. Gany te sert une coupe.', mood: 'cheer', priority: 20, ttl: 7, confetti: true });
+      }],
+      ['fête suivante', (() => {
+        const days = [['noel', 'Joyeux Noël ! Même Zeus fait une pause.'], ['nouvelan', 'Bonne année ! Que l’Olympe te soit favorable.'], ['avril', 'Poisson d’avril ! (Regarde bien mon flanc.)'], ['juillet', 'Fête nationale : feux d’artifice sur l’Olympe ce soir !'], ['halloween', 'Halloween : même Hadès est de sortie.'], [null, null]];
+        let i = -1;
+        return () => {
+          const [outfit, phrase] = days[(i = (i + 1) % days.length)];
+          setState('gany', { occasion: outfit ? { id: outfit, outfit, phrase } : null });
+        };
+      })()],
+      ['pause : boire', () => pushAlert({ key: 'gany:break', module: 'gany', title: 'Une gorgée d’eau ?', text: '3 h sans pause. Même les dieux s’hydratent.', mood: 'drink', priority: 25, ttl: 12 })],
+    ]) {
+      bar.append(Object.assign(document.createElement('button'), { textContent: label, onclick: fn }));
+    }
+  </script>
+</body>
+</html>

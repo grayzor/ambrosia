@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:;">
+  <title>Ambrosia</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="island" class="mode-notch">
+    <i class="ear left"></i><i class="ear right"></i>
+    <canvas id="gany"></canvas>
+    <div id="notch-row"></div>
+    <div id="peek">
+      <div class="peek-body">
+        <div class="peek-title"></div>
+        <div class="peek-text"></div>
+      </div>
+      <div class="peek-actions"></div>
+    </div>
+    <div id="open">
+      <div id="open-inner">
+        <header id="head">
+          <div class="hello">
+            <div class="hello-title">Gany</div>
+            <div class="hello-sub"></div>
+          </div>
+          <div class="tools"></div>
+        </header>
+        <nav id="tabs"></nav>
+        <section id="panel"></section>
+      </div>
+    </div>
+  </div>
+  <script type="module" src="island.js"></script>
+</body>
+</html>

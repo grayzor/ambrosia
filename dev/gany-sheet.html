@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Gany — planche des humeurs</title>
+<style>
+  body { background: #111; color: #ddd; font: 13px "Segoe UI", sans-serif; margin: 24px; }
+  .grid { display: grid; grid-template-columns: repeat(5, 150px); gap: 16px; }
+  .cell { background: #000; border-radius: 16px; padding: 8px; text-align: center; }
+  canvas { width: 130px; height: 130px; display: block; margin: 0 auto; }
+  .small canvas { width: 28px; height: 28px; }
+</style>
+</head>
+<body>
+<h3>Gany — toutes les humeurs (dev, ne part pas dans l'app)</h3>
+<div class="cell" style="width:320px"><canvas id="big" style="width:300px;height:300px"></canvas></div>
+<div class="grid" id="grid"></div>
+<h4>Petites tailles</h4>
+<div class="grid small" id="small"></div>
+<h4>Tenues (week-end, fêtes et jours fériés)</h4>
+<div class="grid" id="outfits"></div>
+<script type="module">
+  import { Gany, MOOD_NAMES } from '../src/renderer/gany.js';
+  const big = new Gany(document.getElementById('big'));
+  big.setMood(new URLSearchParams(location.search).get('mood') || 'idle');
+  const q = new URLSearchParams(location.search);
+  // ?outfit=weekend|noel|nouvelan|avril|juillet|halloween|valentin|epiphanie|paques, ?energy=tired, ?impatience=0..3
+  const dress = (g) => { g.setOutfit(q.get('outfit')); g.setEnergy(q.get('energy') || 'normal'); g.setImpatience?.(Number(q.get('impatience')) || 0); };
+  dress(big);
+  big.start();
+  // ?idle=yawn|crown|fly|cup|doze replays an idle animation on the big Gany
+  if (q.get('idle')) { const play = () => big.playIdle(q.get('idle'), 3500); play(); setInterval(play, 4500); }
+  const only = new URLSearchParams(location.search).get('only');
+  for (const [id, list] of [['grid', MOOD_NAMES.filter((m) => !only || m.includes(only))], ['small', ['idle', 'working', 'mail', 'approval', 'sleeping']]]) {
+    for (const m of list) {
+      const cell = document.createElement('div');
+      cell.className = 'cell';
+      const c = document.createElement('canvas');
+      cell.append(c, Object.assign(document.createElement('div'), { textContent: m }));
+      document.getElementById(id).append(cell);
+      const g = new Gany(c);
+      g.setMood(m);
+      dress(g);
+      g.start();
+      c.addEventListener('mousemove', (e) => g.look(e.offsetX - 65, e.offsetY - 65));
+    }
+  }
+  // Outfits (src/modules/gany/logic.js → occasion), ?only= filters them too
+  for (const o of ['weekend', 'noel', 'nouvelan', 'epiphanie', 'valentin', 'avril', 'paques', 'juillet', 'halloween'].filter((x) => !only || x.includes(only))) {
+    const cell = document.createElement('div');
+    cell.className = 'cell';
+    const c = document.createElement('canvas');
+    cell.append(c, Object.assign(document.createElement('div'), { textContent: o }));
+    document.getElementById('outfits').append(cell);
+    const g = new Gany(c);
+    g.setOutfit(o);
+    g.start();
+  }
+</script>
+</body>
+</html>

@@ -1,0 +1,343 @@
+/* Ambrosia — the island. Shared tokens first: module views use them too. */
+
+:root {
+  --ink: #000;
+  --card: #141218;
+  --card-2: #1C1922;
+  --line: rgba(255, 255, 255, 0.07);
+  --text: #F4F0E8;
+  --dim: #A39CB0;
+  --faint: #6E687A;
+  --gold: #E8B923;
+  --gold-light: #F8DC6C;
+  --nectar: linear-gradient(135deg, #F8DC6C 0%, #F2A65A 100%);
+  --ok: #3FB950;
+  --warn: #F2A65A;
+  --bad: #F0616D;
+  --blue: #6CB4FF;
+  --spring: cubic-bezier(.3, 1.35, .45, 1);
+  --ease: cubic-bezier(.25, .8, .25, 1);
+  --font: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --mono: "Cascadia Code", "Cascadia Mono", Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; }
+body { font: 13px/1.4 var(--font); color: var(--text); user-select: none; -webkit-font-smoothing: antialiased; }
+button { font: inherit; color: inherit; }
+::-webkit-scrollbar { width: 8px; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,.12); border-radius: 8px; border: 2px solid transparent; background-clip: padding-box; }
+
+/* ── Island shell ─────────────────────────────────────────────────────────── */
+
+#island {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: var(--w, 168px);
+  height: var(--h, 30px);
+  background: var(--ink);
+  border-radius: 0 0 var(--r, 14px) var(--r, 14px);
+  transition: width .42s var(--spring), height .42s var(--spring), border-radius .3s var(--ease), box-shadow .3s var(--ease);
+  box-shadow: 0 0 0 rgba(0,0,0,0);
+}
+#island.mode-open, #island.mode-peek { box-shadow: 0 10px 40px rgba(0,0,0,.45), 0 0 0 1px rgba(255,255,255,.04); }
+#island.mode-line { --h: 5px; --w: 120px; --r: 4px; }
+
+.ear { position: absolute; top: 0; width: 10px; height: 10px; pointer-events: none; }
+.ear.left { left: -10px; background: radial-gradient(circle at 0 100%, transparent 9.5px, var(--ink) 10px); }
+.ear.right { right: -10px; background: radial-gradient(circle at 100% 100%, transparent 9.5px, var(--ink) 10px); }
+#island.mode-line .ear { display: none; }
+
+#gany {
+  position: absolute;
+  left: var(--gx, 8px);
+  top: var(--gy, 1px);
+  width: var(--gs, 28px);
+  height: var(--gs, 28px);
+  transition: left .42s var(--spring), top .42s var(--spring), width .42s var(--spring), height .42s var(--spring), opacity .2s;
+  cursor: pointer;
+  /* Above #peek / #open, which cover the whole island: Gany must keep getting clicks. */
+  z-index: 2;
+}
+#island.mode-line #gany { opacity: 0; }
+#island.mode-peek { --gx: 12px; --gy: 6px; --gs: 54px; }
+#island.mode-open { --gx: 14px; --gy: 6px; --gs: 70px; }
+
+/* Glow under the notch when something wants attention */
+#island.attention::after {
+  content: "";
+  position: absolute; left: 18%; right: 18%; bottom: -1px; height: 2px;
+  background: var(--nectar);
+  border-radius: 2px;
+  filter: blur(.4px);
+  animation: glow 1.6s ease-in-out infinite;
+}
+@keyframes glow { 50% { opacity: .35; } }
+
+/* ── Notch row ────────────────────────────────────────────────────────────── */
+
+#notch-row {
+  position: absolute; left: 40px; right: 12px; top: 0; height: 30px;
+  display: flex; align-items: center; justify-content: flex-end; gap: 7px;
+  transition: opacity .15s;
+  white-space: nowrap; overflow: hidden;
+}
+#island:not(.mode-notch) #notch-row { opacity: 0; pointer-events: none; }
+.chip { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 600; color: var(--dim); }
+.chip .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--c, var(--gold)); }
+.chip .dot.pulse { animation: pulse 1.2s ease-in-out infinite; }
+.chip.badge { color: #1A1406; background: var(--c, var(--gold)); padding: 0 6px; border-radius: 8px; height: 16px; }
+@keyframes pulse { 50% { opacity: .3; transform: scale(.8); } }
+.chip .dot.ring { width: 9px; height: 9px; background: conic-gradient(var(--c, var(--gold)) var(--p, 0deg), rgba(255,255,255,.16) 0); }
+
+/* Ticker: a line that passes in the notch (a module's summary().ticker), never an alert */
+.ticker { flex: none; display: inline-flex; align-items: baseline; gap: 5px; font-size: 11px; font-weight: 600; color: var(--dim); cursor: pointer; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.ticker:hover .tk-file { color: var(--text); }
+.ticker.tk-in { animation: tick-in .32s var(--ease); }
+.tk-lead { color: var(--gold-light); }
+.tk-sep { color: var(--faint); font-weight: 400; }
+.tk-file { color: #D9D3E3; font-weight: 500; }
+.tk-add { color: #7EE08F; }
+.tk-del { color: #FF9AA3; }
+.tk-more { color: var(--faint); }
+.hello-sub .ticker { font-size: 12px; }
+@keyframes tick-in { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .ticker.tk-in { animation: none; } }
+
+/* ── Peek (alert) ─────────────────────────────────────────────────────────── */
+
+#peek {
+  position: absolute; left: 76px; right: 14px; top: 10px; bottom: 10px;
+  display: flex; align-items: center; gap: 8px;
+  opacity: 0; transition: opacity .2s .08s; pointer-events: none; overflow: hidden;
+}
+#island.mode-peek #peek { opacity: 1; pointer-events: auto; cursor: pointer; }
+.peek-title { font-weight: 650; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.peek-title .from { color: var(--gold-light); }
+.peek-text { color: var(--dim); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ── Open ─────────────────────────────────────────────────────────────────── */
+
+#open {
+  position: absolute; inset: 0; overflow: hidden;
+  opacity: 0; pointer-events: none; transition: opacity .18s;
+}
+#island.mode-open #open { opacity: 1; pointer-events: auto; transition: opacity .25s .1s; }
+#open-inner { padding: 10px 16px 14px 16px; }
+
+#head { display: flex; align-items: center; height: 64px; padding-left: 78px; gap: 10px; }
+.hello { flex: 1; min-width: 0; }
+.hello-title { font-size: 15px; font-weight: 700; letter-spacing: .2px; }
+.hello-title .amb { background: var(--nectar); -webkit-background-clip: text; color: transparent; }
+.hello-sub { color: var(--dim); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tools { display: flex; gap: 4px; }
+.icon-btn {
+  width: 30px; height: 30px; border-radius: 10px; border: 0; background: transparent; color: var(--dim);
+  display: grid; place-items: center; cursor: pointer; transition: background .15s, color .15s;
+}
+.icon-btn:hover { background: var(--card-2); color: var(--text); }
+.icon-btn.on { color: var(--gold); }
+.icon-btn svg { width: 16px; height: 16px; }
+/* A newer Ambrosia is ready (src/main/updater.js): the only text button among the icons */
+.upd-btn {
+  height: 30px; padding: 0 10px 0 8px; border-radius: 10px; border: 0; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 5px; font: inherit; font-size: 12px; font-weight: 650;
+  color: #1A1406; background: var(--nectar); transition: filter .15s;
+}
+.upd-btn:hover { filter: brightness(1.08); }
+.upd-btn svg { width: 14px; height: 14px; }
+.upd-btn.busy { cursor: default; opacity: .7; }
+
+#tabs { display: flex; gap: 6px; margin: 6px 0 10px; flex-wrap: wrap; }
+.tab {
+  display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 11px;
+  border-radius: 14px; border: 1px solid var(--line); background: var(--card); color: var(--dim);
+  cursor: pointer; font-weight: 600; font-size: 12px; transition: all .15s;
+}
+.tab:hover { color: var(--text); }
+.tab.sel { color: var(--text); border-color: color-mix(in srgb, var(--c) 55%, transparent); background: color-mix(in srgb, var(--c) 14%, var(--card)); }
+.tab .ico { font-size: 13px; }
+.tab .count { min-width: 16px; height: 16px; padding: 0 5px; border-radius: 8px; background: var(--c); color: #120E04; font-size: 10.5px; display: grid; place-items: center; }
+
+#panel { max-height: 430px; overflow-y: auto; overflow-x: hidden; padding-right: 2px; }
+
+/* ── Building blocks for module views ─────────────────────────────────────── */
+
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 10px 12px; }
+.card + .card { margin-top: 8px; }
+.card.hot { border-color: rgba(232,185,35,.45); box-shadow: 0 0 0 1px rgba(232,185,35,.15) inset; }
+.row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.grow { flex: 1; min-width: 0; }
+.ellipsis { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dim { color: var(--dim); }
+.faint { color: var(--faint); }
+.small { font-size: 11.5px; }
+.title { font-weight: 650; }
+.mono { font-family: var(--mono); font-size: 12px; }
+.empty { text-align: center; color: var(--faint); padding: 18px 8px; }
+.sep { height: 1px; background: var(--line); margin: 8px 0; }
+.list > * + * { margin-top: 6px; }
+.pill { display: inline-flex; align-items: center; height: 18px; padding: 0 7px; border-radius: 9px; font-size: 10.5px; font-weight: 700; background: var(--card-2); color: var(--dim); }
+.pill.gold { background: rgba(232,185,35,.18); color: var(--gold-light); }
+.pill.ok { background: rgba(63,185,80,.16); color: #7EE08F; }
+.pill.bad { background: rgba(240,97,109,.16); color: #FF9AA3; }
+.pill.blue { background: rgba(108,180,255,.15); color: #A9D2FF; }
+.state-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--c, var(--faint)); }
+.state-dot.pulse { animation: pulse 1.2s ease-in-out infinite; }
+
+.btn {
+  height: 30px; padding: 0 14px; border-radius: 10px; border: 1px solid var(--line);
+  background: var(--card-2); color: var(--text); cursor: pointer; font-weight: 600; font-size: 12.5px;
+  transition: filter .15s, background .15s;
+}
+.btn:hover { filter: brightness(1.2); }
+.btn.primary { background: var(--nectar); color: #1A1204; border: 0; }
+.btn.danger { background: rgba(240,97,109,.16); color: #FFB3BA; border-color: rgba(240,97,109,.3); }
+.btn.ghost { background: transparent; }
+.btn.sm { height: 24px; padding: 0 9px; font-size: 11.5px; border-radius: 8px; }
+.btn:disabled { opacity: .45; cursor: default; filter: none; }
+.btns { display: flex; gap: 6px; flex-wrap: wrap; }
+.btns.end { justify-content: flex-end; }
+
+pre, .code {
+  font-family: var(--mono); font-size: 11.5px; background: #0B0A0E; border: 1px solid var(--line);
+  border-radius: 10px; padding: 8px 10px; margin: 6px 0; white-space: pre-wrap; word-break: break-word;
+  max-height: 160px; overflow: auto; user-select: text;
+}
+.md { user-select: text; }
+.md p { margin: 0 0 6px; }
+.md ul { margin: 0 0 6px; padding-left: 18px; }
+.md code { font-family: var(--mono); font-size: 11.5px; background: #0B0A0E; padding: 1px 4px; border-radius: 4px; }
+.md-h { font-weight: 700; margin: 6px 0 4px; }
+.md a { color: var(--gold-light); }
+
+input.text, textarea.text {
+  width: 100%; background: #0B0A0E; border: 1px solid var(--line); border-radius: 10px; color: var(--text);
+  font: inherit; padding: 8px 10px; outline: none; resize: none; user-select: text;
+}
+input.text:focus, textarea.text:focus { border-color: rgba(232,185,35,.5); }
+
+.choice {
+  display: flex; gap: 8px; align-items: flex-start; padding: 7px 9px; border-radius: 10px;
+  border: 1px solid var(--line); background: var(--card-2); cursor: pointer; text-align: left; width: 100%;
+}
+.choice:hover { border-color: rgba(232,185,35,.35); }
+.choice.sel { border-color: var(--gold); background: rgba(232,185,35,.1); }
+.choice .tick { width: 14px; height: 14px; border-radius: 4px; border: 1.5px solid var(--faint); flex: none; margin-top: 2px; }
+.choice.sel .tick { background: var(--gold); border-color: var(--gold); }
+
+/* Moving the island along the top edge */
+#island.dragging { cursor: grabbing; transform: translateX(-50%) scale(1.03); box-shadow: 0 6px 24px rgba(232,185,35,.25), 0 0 0 1px rgba(232,185,35,.35); }
+#island.dragging * { cursor: grabbing !important; }
+
+.peek-body { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; }
+.peek-actions { display: flex; gap: 6px; flex: none; }
+.peek-actions:empty { display: none; }
+
+/* A meeting starting or running without you */
+#island.alarm::after {
+  content: "";
+  position: absolute; left: 10%; right: 10%; bottom: -1px; height: 3px;
+  background: linear-gradient(90deg, #F0616D, #F2A65A, #F0616D);
+  border-radius: 2px;
+  animation: glow .8s ease-in-out infinite;
+}
+#island.alarm { box-shadow: 0 6px 30px rgba(240,97,109,.35), 0 0 0 1px rgba(240,97,109,.4); }
+
+/* Tabs: brand logos; quiet sections are icon-only, the ones that need you are loud */
+.tab .logo { width: 15px; height: 15px; object-fit: contain; flex: none; }
+.tab.quiet { width: 32px; padding: 0; justify-content: center; }
+.tab.quiet.sel { box-shadow: 0 0 0 1px color-mix(in srgb, var(--c) 45%, transparent) inset; }
+.tab.loud { border-color: color-mix(in srgb, var(--c) 55%, transparent); color: var(--text); }
+/* Many sections calling at once: their names shrink (full name in the tooltip) instead of wrapping. */
+#tabs { flex-wrap: nowrap; }
+.tab { flex: none; }
+.tab.loud { flex: 0 1 auto; min-width: 0; }
+.tab .tab-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tab .count { flex: none; }
+.chip .chip-logo { width: 13px; height: 13px; object-fit: contain; }
+
+/* Confetti fall over the transparent, click-through part of the window */
+#confetti { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 5; }
+
+/* A file is being dragged over: Gany holds out his cup */
+#island.feeding { box-shadow: 0 0 0 2px rgba(248,220,108,.7), 0 8px 30px rgba(232,185,35,.35); }
+/* …folded, the notch opens into a drop zone (island.js: DROP_W × DROP_H) */
+#island.feeding:not(.mode-open) { --gx: 14px; --gy: 8px; --gs: 54px; }
+#island.feeding:not(.mode-open) #gany { opacity: 1; }
+#island.feeding:not(.mode-open) .ear { display: block; }
+#island.feeding:not(.mode-open) #notch-row, #island.feeding:not(.mode-open) #peek { opacity: 0; pointer-events: none; }
+#drop-hint {
+  position: absolute; left: 80px; right: 16px; top: 0; bottom: 0;
+  display: flex; flex-direction: column; justify-content: center; gap: 1px;
+  opacity: 0; pointer-events: none; transition: opacity .15s; white-space: nowrap; overflow: hidden;
+}
+#island.feeding:not(.mode-open) #drop-hint { opacity: 1; transition: opacity .25s .12s; }
+.drop-title { font-size: 14px; font-weight: 650; color: var(--gold-light); }
+.drop-sub { font-size: 12px; color: var(--dim); }
+
+/* Full screen on this display: the island steps aside (the window hides, see main.js) */
+#island.aside { opacity: 0; pointer-events: none; }
+
+/* Agenda: the meeting brief, unfolded under its meeting */
+.brief { margin-top: 8px; padding: 8px 10px; border-radius: 10px; background: var(--card-2); border: 1px solid var(--line); user-select: text; }
+.brief-h { margin: 8px 0 3px; font-size: 10px; font-weight: 700; letter-spacing: .5px; text-transform: uppercase; color: var(--faint); }
+.brief-h:first-child { margin-top: 0; }
+.brief ul { margin: 0; padding-left: 16px; }
+.brief li { margin: 1px 0; }
+.link { color: var(--gold-light); cursor: pointer; }
+.link:hover { text-decoration: underline; }
+
+/* « En appel » : a quiet mark in the notch while Gany holds back what can wait */
+.chip.call { color: #A9D2FF; gap: 3px; }
+
+/* ── Gany's entrance (launch.js) ─────────────────────────────────────────── */
+/* The island's shape is driven frame by frame: no CSS transition fights it,
+   and what normally lives inside waits until the curtain falls. */
+#island.launching { transition: none !important; box-shadow: 0 12px 44px rgba(0,0,0,.5), 0 0 0 1px rgba(232,185,35,.10); }
+#island.launching #gany { opacity: 0; transition: none; }
+#island.launching #notch-row, #island.launching #peek, #island.launching #open { opacity: 0 !important; pointer-events: none; transition: none; }
+#island.launching::after { display: none; }
+#launch { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 6; display: none; }
+
+/* An approval has been waiting for minutes: the underline hurries */
+#island.impatient.attention::after { height: 3px; animation-duration: .7s; }
+
+/* Focus mode: Gany makes himself tiny, only what is urgent shows */
+#island.focus.mode-notch { --gx: 10px; --gy: 6px; --gs: 18px; }
+#island.focus #notch-row > .chip:not(.call) { display: none; }
+
+/* ── Gany's proposals on triage cards (triage-view.js) ───────────────────── */
+.proposal {
+  margin-top: 8px; padding: 8px 10px; border-radius: 11px;
+  background: rgba(232,185,35,.06); border: 1px solid rgba(232,185,35,.22);
+}
+.proposal > * + * { margin-top: 4px; }
+.proposal.folded { cursor: pointer; padding: 5px 10px; }
+.prop-head { font-size: 11.5px; font-weight: 700; color: var(--gold-light); }
+.prop-link { color: var(--gold-light); cursor: pointer; text-decoration: none; }
+.prop-link:hover { text-decoration: underline; }
+.prop-source {
+  white-space: pre-wrap; word-break: break-word; max-height: 140px; overflow: auto; user-select: text;
+  padding: 6px 8px; border-radius: 8px; background: #0B0A0E; border: 1px solid var(--line); color: var(--dim);
+}
+.prop-text { font-size: 12px; line-height: 1.4; resize: vertical; margin-top: 6px; }
+.btn.sm.icon { width: 22px; padding: 0; text-align: center; }
+
+/* « ⋮ » : the sections rarely visited, listed vertically under the tabs */
+.tab.more { --c: var(--gold); font-size: 15px; font-weight: 800; line-height: 1; }
+#more { display: flex; flex-direction: column; gap: 2px; }
+#more:not(:empty) { margin: -4px 0 10px; padding: 4px; border-radius: 12px; background: var(--card); border: 1px solid var(--line); }
+.more-item {
+  display: flex; align-items: center; gap: 8px; min-width: 0; padding: 6px 8px; border: 0; border-radius: 9px;
+  background: transparent; color: var(--text); font: inherit; font-size: 12px; text-align: left; cursor: pointer;
+}
+.more-item:hover { background: color-mix(in srgb, var(--c) 14%, var(--card-2)); }
+.more-item .logo { width: 15px; height: 15px; object-fit: contain; flex: none; }
+.more-item .ico { width: 15px; text-align: center; flex: none; }
+.more-name { font-weight: 600; flex: none; }
+.more-sub { color: var(--dim); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.more-item .count { margin-left: auto; min-width: 16px; height: 16px; padding: 0 5px; border-radius: 8px; background: var(--c); color: #120E04; font-size: 10.5px; display: grid; place-items: center; flex: none; }
+.tab.more.loud { padding: 0 9px 0 11px; }
