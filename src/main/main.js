@@ -4,7 +4,7 @@
 // screen. Everything outside the island shape lets clicks through
 // (setIgnoreMouseEvents + forward), so the page decides when it wants the mouse.
 
-const { app, BrowserWindow, ipcMain, screen, Tray, Menu, nativeImage, shell, powerMonitor, clipboard } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, Tray, Menu, nativeImage, shell, powerMonitor } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const paths = require('./paths');
@@ -17,6 +17,7 @@ const host = require('./modules');
 const foreground = require('./foreground');
 const sys = require('./system');
 const updater = require('./updater');
+const Clip = require('./clip');
 
 const DEV = process.argv.includes('--dev');
 const WIN_W = 760;
@@ -463,8 +464,9 @@ ipcMain.on('blur-island', () => {
 });
 
 // Right-click on Gany: the quick menu, native.
-ipcMain.on('gany-menu', () => {
+ipcMain.on('gany-menu', async () => {
   if (!island || island.isDestroyed()) return;
+  const clipImage = await Clip.hasImage();
   const g = store.section('general');
   const act = (id, name) => () => host.action(id, name).catch((err) => log('menu action', err.message));
   const has = (id) => host.modules.get(id)?.ctx;
@@ -478,7 +480,7 @@ ipcMain.on('gany-menu', () => {
     { label: 'Vérifier les mails', enabled: !!has('mail'), click: act('mail', 'refresh') },
     { label: 'Vérifier ClickUp', enabled: !!has('clickup'), click: act('clickup', 'refresh') },
     { type: 'separator' },
-    ...voiceAndReadItems(has),
+    ...voiceAndReadItems(has, clipImage),
     ...ganyFocusItems(has),
     { label: 'Rejouer l’arrivée de Gany', click: () => send('launch', { kind: 'full' }) },
     { label: 'Réglages…', click: () => openSettings() },
@@ -489,23 +491,15 @@ ipcMain.on('gany-menu', () => {
  * Talk to Gany (src/modules/chat: the live conversation), and « Lire le texte de
  * l'image copiée » (src/modules/ocr) only while the clipboard holds an image.
  */
-function voiceAndReadItems(has) {
+function voiceAndReadItems(has, clipImage) {
   const run = (id, name, payload) => () => host.action(id, name, payload).catch((err) => log('menu action', err.message));
   const items = [];
   if (has('chat')) {
     const live = host.modules.get('chat')?.state?.voice?.live;
     items.push(live ? { label: 'Raccrocher (conversation avec Gany)', click: run('chat', 'live', { on: false }) } : { label: 'Parler à Gany', click: run('chat', 'live', { on: true }) });
   }
-  if (has('ocr') && clipboardHasImage()) items.push({ label: 'Lire le texte de l’image copiée', click: run('ocr', 'readClipboard') });
+  if (has('ocr') && clipImage) items.push({ label: 'Lire le texte de l’image copiée', click: run('ocr', 'readClipboard') });
   return items.length ? [...items, { type: 'separator' }] : [];
-}
-
-function clipboardHasImage() {
-  try {
-    return clipboard.availableFormats().some((f) => f.startsWith('image/'));
-  } catch {
-    return false;
-  }
 }
 
 /** Gany's focus mode in his menu (src/modules/gany): tiny Gany, only the urgent passes. */
@@ -555,7 +549,15 @@ ipcMain.on('tray-icon', (_e, dataUrl) => {
   if (tray && typeof dataUrl === 'string') tray.setImage(nativeImage.createFromDataURL(dataUrl));
 });
 
-ipcMain.handle('action', (_e, id, name, payload) => host.action(id, name, payload));
+// A failing action is logged here: the pages often ignore the rejection (a button has nowhere to show it).
+ipcMain.handle('action', async (_e, id, name, payload) => {
+  try {
+    return await host.action(id, name, payload);
+  } catch (err) {
+    log(`action ${id}.${name}`, err?.stack || err?.message || err);
+    throw err;
+  }
+});
 
 const core = {
   boot: () => ({

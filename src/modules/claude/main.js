@@ -10,6 +10,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { clipboard, nativeImage } = require('electron');
+const Clip = require('../../main/clip');
 const hooksInstall = require('../../main/hooks-install');
 const procs = require('../../main/procs');
 const SessionWindow = require('../../main/session-window');
@@ -1063,8 +1064,10 @@ module.exports = {
       if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/png;base64,') || dataUrl.length > 8e6) return false;
       const img = nativeImage.createFromDataURL(dataUrl);
       if (img.isEmpty()) return false;
-      clipboard.writeImage(img);
-      return true;
+      return Clip.writeImage(img).then(
+        () => true,
+        (err) => (ctx.log('copyHarvest', err.message), false),
+      );
     });
     function harvestTick() {
       const now = new Date();
