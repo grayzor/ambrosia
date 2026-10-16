@@ -138,7 +138,7 @@
     };
     // Modules with their own fixture file: dev/fixtures/<id>.js → { module, state(), action(name, payload), connect(send) }
     const extra = {};
-    for (const id of ['report', 'launch', 'routines', 'claude', 'notify', 'agenda']) {
+    for (const id of ['report', 'launch', 'routines', 'claude', 'notify', 'agenda', 'ocr', 'chat']) {
       const f = (extra[id] = (await import(`/dev/fixtures/${id}.js`)).default);
       const i = fixtures.modules.findIndex((m) => m.id === id);
       if (i >= 0) fixtures.modules[i] = f.module;

@@ -4,7 +4,7 @@
 // screen. Everything outside the island shape lets clicks through
 // (setIgnoreMouseEvents + forward), so the page decides when it wants the mouse.
 
-const { app, BrowserWindow, ipcMain, screen, Tray, Menu, nativeImage, shell, powerMonitor } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, Tray, Menu, nativeImage, shell, powerMonitor, clipboard } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const paths = require('./paths');
@@ -478,11 +478,35 @@ ipcMain.on('gany-menu', () => {
     { label: 'Vérifier les mails', enabled: !!has('mail'), click: act('mail', 'refresh') },
     { label: 'Vérifier ClickUp', enabled: !!has('clickup'), click: act('clickup', 'refresh') },
     { type: 'separator' },
+    ...voiceAndReadItems(has),
     ...ganyFocusItems(has),
     { label: 'Rejouer l’arrivée de Gany', click: () => send('launch', { kind: 'full' }) },
     { label: 'Réglages…', click: () => openSettings() },
   ]).popup({ window: island });
 });
+
+/**
+ * Talk to Gany (src/modules/chat: the live conversation), and « Lire le texte de
+ * l'image copiée » (src/modules/ocr) only while the clipboard holds an image.
+ */
+function voiceAndReadItems(has) {
+  const run = (id, name, payload) => () => host.action(id, name, payload).catch((err) => log('menu action', err.message));
+  const items = [];
+  if (has('chat')) {
+    const live = host.modules.get('chat')?.state?.voice?.live;
+    items.push(live ? { label: 'Raccrocher (conversation avec Gany)', click: run('chat', 'live', { on: false }) } : { label: 'Parler à Gany', click: run('chat', 'live', { on: true }) });
+  }
+  if (has('ocr') && clipboardHasImage()) items.push({ label: 'Lire le texte de l’image copiée', click: run('ocr', 'readClipboard') });
+  return items.length ? [...items, { type: 'separator' }] : [];
+}
+
+function clipboardHasImage() {
+  try {
+    return clipboard.availableFormats().some((f) => f.startsWith('image/'));
+  } catch {
+    return false;
+  }
+}
 
 /** Gany's focus mode in his menu (src/modules/gany): tiny Gany, only the urgent passes. */
 function ganyFocusItems(has) {

@@ -341,3 +341,57 @@ input.text:focus, textarea.text:focus { border-color: rgba(232,185,35,.5); }
 .more-sub { color: var(--dim); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .more-item .count { margin-left: auto; min-width: 16px; height: 16px; padding: 0 5px; border-radius: 8px; background: var(--c); color: #120E04; font-size: 10.5px; display: grid; place-items: center; flex: none; }
 .tab.more.loud { padding: 0 9px 0 11px; }
+
+/* Images on their way: the drop zone splits in two (island.js, DROP_SPLIT_W) */
+#drop-hint.split { flex-direction: row; gap: 8px; padding: 7px 0; }
+.drop-half {
+  flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; padding: 0 12px;
+  border-radius: 14px; border: 1px dashed rgba(248,220,108,.28); transition: background .12s, border-color .12s;
+}
+.drop-half .drop-title { font-size: 13px; color: var(--dim); }
+.drop-half.on { background: rgba(248,220,108,.12); border: 1px solid var(--gold-light); }
+.drop-half.on .drop-title { color: var(--gold-light); }
+
+/* An offer at the top of the open island (summary().offer): « Lire le texte » after a copy */
+#offer:empty { display: none; }
+.offer {
+  display: flex; align-items: center; gap: 8px; margin: -2px 0 10px; padding: 7px 8px 7px 10px;
+  border-radius: 12px; background: color-mix(in srgb, var(--c) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--c) 35%, transparent); animation: offer-in .25s var(--ease);
+}
+.offer-ico { color: var(--c); font-size: 15px; width: 16px; text-align: center; }
+.offer-text { flex: 1; min-width: 0; font-size: 12px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@keyframes offer-in { from { opacity: 0; transform: translateY(-4px); } }
+
+/* Lire (OCR) */
+.ocr-thumb { width: 44px; height: 34px; object-fit: cover; border-radius: 6px; border: 1px solid var(--line); flex: none; background: var(--card-2); }
+.ocr-thumb.blank { display: inline-flex; align-items: center; justify-content: center; color: var(--faint); }
+pre.ocr-text {
+  margin: 8px 0 0; max-height: 170px; overflow: auto; white-space: pre-wrap; tab-size: 6; user-select: text;
+  font: 12px/1.45 var(--font); background: var(--card-2); border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px;
+}
+.ocr-wait { margin-top: 6px; animation: fade-pulse 1.4s ease-in-out infinite; }
+@keyframes fade-pulse { 50% { opacity: .45; } }
+
+/* Demander: dictation, live conversation, attachments */
+.btn.sm svg { width: 13px; height: 13px; margin-right: 4px; vertical-align: -2px; }
+.btn.cv-mic.on, .btn.cv-call.on { background: rgba(255,107,122,.18); border-color: rgba(255,107,122,.5); color: #FFC2C8; }
+.cv-heard { font-size: 11.5px; color: var(--dim); font-style: italic; min-height: 0; margin-top: 3px; }
+.cv-heard.on::before { content: ''; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #FF6B7A; margin-right: 6px; animation: pulse 1.2s ease-in-out infinite; }
+.cv-files { display: flex; gap: 6px; flex-wrap: wrap; }
+.cv-files:not(:empty) { margin-bottom: 6px; }
+.cv-file { display: inline-flex; align-items: center; gap: 6px; max-width: 220px; height: 30px; padding: 0 4px 0 4px; border-radius: 8px; background: var(--card-2); border: 1px solid var(--line); font-size: 11.5px; }
+.cv-file img { height: 22px; max-width: 40px; object-fit: cover; border-radius: 4px; }
+.cv-file button { border: 0; background: none; color: var(--faint); cursor: pointer; padding: 0 4px; }
+.cv-call-card { margin-bottom: 8px; border-color: rgba(255,107,122,.35); }
+.cv-call-card .title { font-size: 12.5px; }
+.cv-wave { display: inline-flex; align-items: center; gap: 2px; height: 22px; width: 26px; flex: none; }
+.cv-wave i { display: block; width: 3px; height: 6px; border-radius: 2px; background: #FF6B7A; }
+.cv-call-card.listening .cv-wave i { animation: cv-bar 1s ease-in-out infinite; }
+.cv-call-card.speaking .cv-wave i { background: var(--gold-light); animation: cv-bar .5s ease-in-out infinite; }
+.cv-call-card.thinking .cv-wave i { background: #B79CFF; animation: cv-bar 1.6s ease-in-out infinite; }
+.cv-wave i:nth-child(2) { animation-delay: .12s !important; }
+.cv-wave i:nth-child(3) { animation-delay: .24s !important; }
+.cv-wave i:nth-child(4) { animation-delay: .36s !important; }
+.cv-wave i:nth-child(5) { animation-delay: .48s !important; }
+@keyframes cv-bar { 0%, 100% { height: 5px; } 50% { height: 18px; } }

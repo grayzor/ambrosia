@@ -10,7 +10,9 @@
 //   * Windows « Ne pas déranger » (every 2.5 s): 'dnd' — { reg, wnf };
 //   * the primary mouse button, only while the pointer is near the island
 //     (watchButton, every 60 ms): 'button' — a file drag approaching the
-//     island (main.js opens the drop zone). Far from it: no button polling.
+//     island (main.js opens the drop zone). Far from it: no button polling;
+//   * the clipboard's sequence number (every 700 ms): 'clip' — { seq, image }, an
+//     image just copied (src/modules/ocr offers to read its text).
 
 const { spawn } = require('child_process');
 const { EventEmitter } = require('events');
@@ -26,6 +28,8 @@ Add-Type -Namespace Amb -Name Fg -MemberDefinition @'
 [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int vk);
 [DllImport("user32.dll")] public static extern int GetSystemMetrics(int i);
 [DllImport("shell32.dll")] public static extern int SHQueryUserNotificationState(out int state);
+[DllImport("user32.dll")] public static extern uint GetClipboardSequenceNumber();
+[DllImport("user32.dll")] public static extern bool IsClipboardFormatAvailable(uint format);
 [DllImport("ntdll.dll")] public static extern int NtQueryWnfStateData(ref ulong name, IntPtr type, IntPtr scope, out uint stamp, byte[] buf, ref uint size);
 public struct RECT { public int Left, Top, Right, Bottom; }
 '@
@@ -39,6 +43,7 @@ $near = $false
 $clock = [Diagnostics.Stopwatch]::StartNew()
 $tick = -700
 $dndTick = -2500
+$clip = -1
 $alive = 0
 $parent = [int]$env:AMB_PARENT
 # WNF_SHEL_QUIETHOURS_ACTIVE_PROFILE_CHANGED: Focus Assist / quiet hours profile (0 = off).
@@ -90,6 +95,13 @@ while ($true) {
     }
     $s = 0
     if ([Amb.Fg]::SHQueryUserNotificationState([ref]$s) -eq 0 -and $s -ne $quns) { $quns = $s; Say @{ k = 'quns'; state = $s } }
+    # The clipboard changed: does it hold an image now (CF_BITMAP, CF_DIB, CF_DIBV5)? One cheap call.
+    $cs = [Amb.Fg]::GetClipboardSequenceNumber()
+    if ($cs -ne $clip) {
+      $clip = $cs
+      $img = [Amb.Fg]::IsClipboardFormatAvailable(2) -or [Amb.Fg]::IsClipboardFormatAvailable(8) -or [Amb.Fg]::IsClipboardFormatAvailable(17)
+      Say @{ k = 'clip'; seq = [int64]$cs; image = [bool]$img }
+    }
   }
   if ($now - $dndTick -ge 2500) {
     $dndTick = $now
@@ -117,6 +129,7 @@ class Foreground extends EventEmitter {
     this.quns = null; // SHQueryUserNotificationState (src/main/system.js → QUNS)
     this.dnd = null; // { reg, wnf }
     this.button = false;
+    this.clip = null; // { seq, image, at }
   }
 
   start() {
@@ -176,6 +189,9 @@ class Foreground extends EventEmitter {
         this.dnd = { reg: Number(w.reg), wnf: Number(w.wnf) };
         log('ne pas déranger', JSON.stringify(this.dnd));
         return this.emit('dnd', this.dnd);
+      case 'clip':
+        this.clip = { seq: Number(w.seq), image: !!w.image, at: Date.now() };
+        return this.emit('clip', this.clip);
       case 'rect':
         if (!this.current) return;
         Object.assign(this.current, { x: w.x, y: w.y, w: w.w, h: w.h });
