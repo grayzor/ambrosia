@@ -11,6 +11,7 @@ import { Gany } from './gany.js';
 import { Sound } from './sound.js';
 import { h, mount, ago, clip, markdown } from './ui.js';
 import { Launch, launchKind, reducedMotion } from './launch.js';
+import { VoicePlayer } from './voice.js';
 
 const api = window.ambrosia;
 const $ = (s) => document.querySelector(s);
@@ -38,6 +39,17 @@ const S = {
 
 const gany = new Gany(canvas);
 gany.start();
+// Gany's voice in a live conversation (src/modules/chat, src/renderer/voice.js).
+// While the sound plays, his face is the one of a Gany who talks, whatever else waits.
+const voice = new VoicePlayer({
+  api,
+  gany,
+  onSpeaking: (on) => {
+    if (on) S.localMood = { name: 'speak', until: Date.now() + 60000 };
+    else if (S.localMood?.name === 'speak') S.localMood = null;
+    updateMood();
+  },
+});
 let launcher = null; // Gany's entrance while it plays (launch.js)
 let lastSize = { w: 168, h: 30, r: 14 };
 
@@ -62,6 +74,7 @@ function setSize(w, h, r) {
 }
 
 const DROP_W = 380;
+const DROP_SPLIT_W = 470; // images: « Lire le texte » | « Demander à Gany »
 const DROP_H = 70;
 
 function layout() {
@@ -70,7 +83,7 @@ function layout() {
   stepAside();
   if (feeding && S.mode !== 'open') {
     // A file on its way: the notch opens into a drop zone (Gany holds out his cup).
-    setSize(DROP_W, DROP_H, 24);
+    setSize(dropImages ? DROP_SPLIT_W : DROP_W, DROP_H, 24);
     gany.setFps(60);
   } else if (S.mode === 'open') {
     const inner = $('#open-inner');
@@ -263,6 +276,10 @@ let loveTimer = null;
 canvas.addEventListener('click', (e) => {
   e.stopPropagation();
   gany.poke();
+  if (voice.speaking || S.states.chat?.voice?.phase === 'speaking') {
+    voice.stop(true); // cut him off, like talking over him
+    return;
+  }
   if (S.mode !== 'open') {
     flash('surprised', 900);
     Sound.play('hover');
@@ -337,9 +354,20 @@ canvas.addEventListener('mousemove', (e) => {
 // When a drag from elsewhere comes near, the main process lets the window take the
 // mouse over a zone around the notch (main.js, « file drags »): the notch opens
 // into a drop zone as soon as a real drag with files enters, not before.
+// Images only: the zone splits in two, « Lire le texte » (Lire, OCR) and « Demander
+// à Gany » (attached to a question); the half under the pointer lights up.
 let feeding = 0;
-const dropHint = h('div#drop-hint', h('div.drop-title', 'Dépose ici, Gany le boit'), h('div.drop-sub', 'et te propose un résumé'));
+let dropImages = false;
+let dropSide = 'ocr';
+const dropHalf = (side, title, sub) => h(`div.drop-half.${side}`, h('div.drop-title', title), h('div.drop-sub', sub));
+const dropFile = [h('div.drop-title', 'Dépose ici, Gany le boit'), h('div.drop-sub', 'et te propose un résumé')];
+const dropHalves = [dropHalf('ocr', 'Lire le texte', 'copié pour toi'), dropHalf('ask', 'Demander à Gany', 'pose ta question')];
+const dropHint = h('div#drop-hint', dropFile);
 island.append(dropHint);
+function setDropSide(side) {
+  dropSide = side;
+  for (const el of dropHalves) el.classList.toggle('on', el.classList.contains(side));
+}
 document.addEventListener('dragenter', (e) => {
   if (!e.dataTransfer?.types?.includes('Files')) {
     // A link, some text: not for Gany, let it reach the window below.
@@ -348,6 +376,11 @@ document.addEventListener('dragenter', (e) => {
   }
   e.preventDefault();
   if (feeding++ === 0) {
+    const files = [...(e.dataTransfer.items || [])].filter((i) => i.kind === 'file');
+    dropImages = files.length > 0 && files.every((i) => /^image\//.test(i.type));
+    mount(dropHint, dropImages ? dropHalves : dropFile);
+    dropHint.classList.toggle('split', dropImages);
+    setDropSide('ocr');
     clearTimeout(hoverTimer);
     island.classList.add('feeding');
     flash('hungry', 60000);
@@ -359,26 +392,70 @@ api.on('drop-armed', (on) => {
   if (!on && feeding) endFeeding();
 });
 document.addEventListener('dragover', (e) => {
-  if (e.dataTransfer?.types?.includes('Files')) e.preventDefault();
+  if (!e.dataTransfer?.types?.includes('Files')) return;
+  e.preventDefault();
+  if (dropImages) {
+    const r = dropHint.getBoundingClientRect();
+    const side = e.clientX < r.left + r.width / 2 ? 'ocr' : 'ask';
+    if (side !== dropSide) setDropSide(side);
+  }
 });
 document.addEventListener('dragleave', () => {
   if (--feeding <= 0) endFeeding();
 });
 function endFeeding() {
   feeding = 0;
+  dropImages = false;
   island.classList.remove('feeding');
   if (S.localMood?.name === 'hungry') S.localMood = null;
   layout();
   updateMood();
 }
+/** The bytes of a dropped image that has no file behind it (from a web page). */
+const fileB64 = (file) =>
+  new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(',')[1] || '');
+    reader.onerror = () => resolve('');
+    reader.readAsDataURL(file);
+  });
+
 document.addEventListener('drop', (e) => {
   e.preventDefault();
-  const files = [...(e.dataTransfer?.files || [])].map((file) => api.pathForFile?.(file)).filter(Boolean);
+  const images = dropImages;
+  const side = dropSide;
+  const dropped = [...(e.dataTransfer?.files || [])];
   endFeeding();
+  if (images && dropped.length) {
+    flash(side === 'ocr' ? 'read' : 'drink', 2600);
+    Sound.play('send');
+    const paths = [];
+    for (const file of dropped.slice(0, 4)) {
+      const p = api.pathForFile?.(file);
+      if (side === 'ocr') {
+        if (p) api.action('ocr', 'readFile', { path: p }).catch(() => {});
+        else fileB64(file).then((b64) => b64 && api.action('ocr', 'readData', { name: file.name, b64 })).catch(() => {});
+      } else if (p) paths.push(p);
+      else fileB64(file).then((b64) => b64 && api.action('chat', 'attachData', { b64 }).then(() => open('chat'))).catch(() => {});
+    }
+    if (paths.length) api.action('chat', 'attach', { paths, focus: true }).catch(() => {});
+    return;
+  }
+  const files = dropped.map((file) => api.pathForFile?.(file)).filter(Boolean);
   if (!files.length) return;
   flash('drink', 2600);
   Sound.play('send');
   api.action('chat', 'fileDropped', { paths: files }).catch(() => {});
+});
+
+// Ctrl+V on the open island (outside a text field): an image in the clipboard is read.
+document.addEventListener('paste', (e) => {
+  const t = e.target;
+  if (S.mode !== 'open' || (t && (/INPUT|TEXTAREA|SELECT/.test(t.tagName) || t.isContentEditable))) return;
+  if (![...(e.clipboardData?.items || [])].some((i) => i.kind === 'file' && i.type.startsWith('image/'))) return;
+  e.preventDefault();
+  flash('read', 2000);
+  api.action('ocr', 'readClipboard').catch(() => {});
 });
 
 // ── Little life when nothing happens ──────────────────────────────────────
@@ -1036,9 +1113,53 @@ function renderPanel(force = false) {
   }
 }
 
+// ── Offers: « now is the moment for… » ──────────────────────────────────
+// A module's summary may carry `offer: { key, at, icon, color, text, actions: [{ label,
+// action, payload, primary, module }], dismiss: { action, payload } }`: something worth
+// doing right now (an image just copied → « Lire le texte »). Shown at the top of the
+// open island only, the freshest one; no sound, no peek: it waits for you to come by.
+
+function offerEl() {
+  let el = document.getElementById('offer');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'offer';
+    $('#panel').before(el);
+  }
+  return el;
+}
+
+function renderOffer() {
+  const el = offerEl();
+  const o = summaries()
+    .filter((s) => s.offer)
+    .map((s) => ({ ...s.offer, module: s.module.id }))
+    .sort((a, b) => (b.at || 0) - (a.at || 0))[0];
+  if (!o || S.mode !== 'open') return mount(el);
+  mount(el,
+    h('div.offer', { style: { '--c': o.color || 'var(--gold-light)' } },
+      h('span.offer-ico', o.icon || '•'),
+      h('span.offer-text', o.text),
+      (o.actions || []).map((a) =>
+        h('button.btn.sm' + (a.primary ? '.primary' : ''), {
+          onclick: (e) => {
+            e.stopPropagation();
+            Sound.play(a.primary ? 'send' : 'tick');
+            api.action(a.module || o.module, a.action, a.payload).catch(() => {});
+          },
+        }, a.label),
+      ),
+      o.dismiss
+        ? h('button.btn.sm.ghost.icon', { title: 'Pas maintenant', onclick: () => api.action(o.module, o.dismiss.action, o.dismiss.payload).catch(() => {}) }, '×')
+        : null,
+    ),
+  );
+}
+
 function renderOpen(force = false) {
   renderHeader();
   renderTabs();
+  renderOffer();
   renderPanel(force);
   layout();
 }
@@ -1061,6 +1182,7 @@ function onStateChanged(id) {
   if (S.mode === 'open') {
     renderHeader();
     renderTabs();
+    renderOffer();
     if (id === S.selected) renderPanel();
   }
   updateMood();
@@ -1070,6 +1192,7 @@ function onStateChanged(id) {
 api.on('state', ({ id, state }) => {
   S.states[id] = state;
   if (id === 'agenda' || id === 'gany') dressGany();
+  if (id === 'chat') voice.update(state.voice, S.settings.chat);
   onStateChanged(id);
 });
 
@@ -1122,6 +1245,7 @@ api.on('reveal', () => {
 api.on('settings', (settings) => {
   S.settings = settings;
   Sound.configure(settings.general || {});
+  voice.setMuted(settings.general?.sounds === false);
   S.modules = S.modules.map((m) => ({ ...m, enabled: settings[m.id]?.enabled !== false }));
   if (S.mode === 'open') renderOpen();
   renderNotch();
@@ -1208,6 +1332,7 @@ async function boot() {
   S.system = b.system || {};
   S.update = b.update || {};
   Sound.configure(b.settings.general || {});
+  voice.setMuted(b.settings.general?.sounds === false);
   await loadViews();
   renderNotch();
   sendTrayIcon();

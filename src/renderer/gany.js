@@ -52,6 +52,11 @@ const MOODS = {
   // Focus mode: eyes closed, levitating, a thin golden halo.
   focus: { wingSpeed: 1.1, wingAmp: 0.04, bob: 0.03, eye: 'closed', mouth: 'smile', halo: true, wingLift: -0.1, eyeScale: 1 },
   // Everything is done: both wings up, a jump, sparkles.
+  // The live conversation (src/modules/chat): all ears, then talking (mouth on the voice).
+  listen: { wingSpeed: 3, wingAmp: 0.12, bob: 0.012, eye: 'open', mouth: 'smile', waves: true, tilt: 0.1, eyeScale: 1.1 },
+  speak: { wingSpeed: 4.5, wingAmp: 0.16, bob: 0.02, eye: 'open', mouth: 'talk', eyeScale: 1 },
+  // Reading an image (Lire): a magnifying glass, eyes on it.
+  read: { wingSpeed: 2.5, wingAmp: 0.1, bob: 0.01, eye: 'open', mouth: 'flat', lens: true, eyeScale: 1.05 },
   cheer: { wingSpeed: 13, wingAmp: 0.35, bob: 0, jump: true, eye: 'happy', mouth: 'grin', sparkles: 8, wingLift: 0.6, eyeScale: 1 },
 };
 
@@ -83,6 +88,8 @@ export class Gany {
     this.glanceAt = null; // { x, y, until }
     this.impatience = 0; // 0..3, while an approval waits
     this.pourK = 1; // 0..1, how far the cup is tipped (mood 'pour')
+    this.voice = 0; // 0..1, loudness of his voice (mood 'speak')
+    this.voiceNow = 0;
   }
 
   /**
@@ -96,6 +103,11 @@ export class Gany {
   /** 0 = calm, 1..3 = an approval has been waiting longer and longer. */
   setImpatience(level) {
     this.impatience = Math.max(0, Math.min(3, level | 0));
+  }
+
+  /** Loudness of Gany's voice, 0..1, while he speaks: his mouth follows it. */
+  setVoice(level) {
+    this.voice = Math.max(0, Math.min(1, Number(level) || 0));
   }
 
   /** 'tired' draws dark circles, 'cheerful' a bouncier Gany. */
@@ -200,11 +212,13 @@ export class Gany {
     if (p.fly) target = { x: Math.cos(s * 2.6) * 0.9, y: Math.sin(s * 3.7) * 0.5 - 0.4 };
     else if (this.glanceAt && t < this.glanceAt.until) target = this.glanceAt;
     else if (imp && s % 4 < 2.8) target = { x: 0.55, y: 0.85 }; // towards the card below
+    else if (p.lens) target = { x: 0.45, y: 0.55 }; // on the glass
     this.lookNow.x += ((p.lookUp ? 0.5 : target.x) - this.lookNow.x) * 0.15;
     this.lookNow.y += ((p.lookUp ? -0.8 : target.y) - this.lookNow.y) * 0.15;
     this.eyeScaleNow += (p.eyeScale - this.eyeScaleNow) * 0.15;
     this.wingLiftNow += ((p.wingLift || 0) - this.wingLiftNow) * 0.1;
     this.squish *= 0.88;
+    this.voiceNow += (this.voice - this.voiceNow) * (this.voice > this.voiceNow ? 0.6 : 0.3);
 
     // Blink
     if (t > this.nextBlink) {
@@ -254,6 +268,7 @@ export class Gany {
     if (p.hourglass) this.drawHourglass(ctx, R, s, p.hourglass);
     if (p.cup) this.drawCup(ctx, R, s, p.cup);
     if (p.bowl) this.drawBowl(ctx, R, s);
+    if (p.lens) this.drawLens(ctx, R, s);
     ctx.restore();
 
     // Overlays in screen space
@@ -268,6 +283,7 @@ export class Gany {
     if (p.fly) this.drawFly(ctx, cx, cy, R, s);
     if (p.sweat) this.drawSweat(ctx, cx + R * 0.85, cy - R * 0.55, R, s);
     if (p.steam) this.drawSteam(ctx, cx, cy - R * 0.9, R, s);
+    if (p.waves) this.drawWaves(ctx, cx, cy, R, s);
   }
 
   /**
@@ -562,6 +578,20 @@ export class Gany {
         for (let i = 1; i <= 4; i++) ctx.quadraticCurveTo(mx - R * 0.12 + (i - 0.5) * R * 0.06, my + (i % 2 ? -1 : 1) * R * 0.05, mx - R * 0.12 + i * R * 0.06, my);
         ctx.stroke();
         break;
+      case 'talk': {
+        // Opens with the voice; a small line between words.
+        const k = this.voiceNow;
+        if (k < 0.04) {
+          ctx.moveTo(mx - R * 0.06, my + R * 0.02);
+          ctx.quadraticCurveTo(mx, my + R * 0.06, mx + R * 0.06, my + R * 0.02);
+          ctx.stroke();
+          break;
+        }
+        ctx.ellipse(mx, my + R * 0.03, R * (0.06 + k * 0.03), R * (0.025 + k * 0.1), 0, 0, TAU);
+        ctx.fillStyle = '#7A2E3A';
+        ctx.fill();
+        break;
+      }
       case 'yawn':
         ctx.ellipse(mx, my + R * 0.06, R * 0.1, R * 0.15, 0, 0, TAU);
         ctx.fillStyle = '#7A2E3A';
@@ -811,6 +841,50 @@ export class Gany {
     ctx.lineWidth = Math.max(0.8, R * 0.07);
     ctx.beginPath();
     ctx.ellipse(0, 0, R * 0.55, R * 0.15, 0, 0, TAU);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  /** Sound coming in: golden arcs by his ear, pulsing outwards (mood 'listen'). */
+  drawWaves(ctx, x, y, R, s) {
+    ctx.save();
+    ctx.lineCap = 'round';
+    ctx.lineWidth = Math.max(0.8, R * 0.07);
+    for (let i = 0; i < 3; i++) {
+      const ph = (s * 0.9 + i / 3) % 1;
+      const r = R * (0.5 + ph * 0.55);
+      ctx.strokeStyle = `rgba(248,220,108,${0.85 * (1 - ph)})`;
+      ctx.beginPath();
+      ctx.arc(x + R * 0.7, y - R * 0.2, r, -Math.PI * 0.28, Math.PI * 0.28);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  /** A golden magnifying glass held up in front (mood 'read'). */
+  drawLens(ctx, R, s) {
+    const x = R * 0.62 + Math.sin(s * 1.6) * R * 0.08;
+    const y = R * 0.38 + Math.cos(s * 1.3) * R * 0.05;
+    const r = R * 0.34;
+    ctx.save();
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = GOLD_DARK;
+    ctx.lineWidth = Math.max(1, R * 0.12);
+    ctx.beginPath();
+    ctx.moveTo(x + r * 0.7, y + r * 0.7);
+    ctx.lineTo(x + r * 1.45, y + r * 1.45);
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(190,230,255,0.35)';
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, TAU);
+    ctx.fill();
+    ctx.strokeStyle = GOLD;
+    ctx.lineWidth = Math.max(1, R * 0.09);
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,255,255,0.7)';
+    ctx.lineWidth = Math.max(0.6, R * 0.04);
+    ctx.beginPath();
+    ctx.arc(x, y, r * 0.65, Math.PI * 1.1, Math.PI * 1.45);
     ctx.stroke();
     ctx.restore();
   }

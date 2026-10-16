@@ -388,6 +388,86 @@ function stream(o, onEvent) {
   };
 }
 
+/**
+ * A conversation that stays open: one CLI process, a user message per turn on stdin
+ * (`--input-format stream-json`), so a spoken exchange does not pay the CLI's start
+ * at every sentence. `onEvent`: `{ type: 'delta', text, turn }`, `{ type: 'tool', name, turn }`,
+ * `{ type: 'done', text, sessionId, turn }`, `{ type: 'error', error, authError, turn }`,
+ * `{ type: 'closed', error }`. Turns are numbered from 1 in the order they were sent.
+ * Returns `{ send(text) → turn, interrupt(), close() }`.
+ */
+function conversation(o, onEvent) {
+  const cli = locate();
+  if (!cli) {
+    setImmediate(() => onEvent({ type: 'closed', error: 'CLI Claude introuvable' }));
+    return { send: () => 0, interrupt() {}, close() {} };
+  }
+  const args = buildArgs({ ...o, persist: true, partial: true }, 'stream-json');
+  args.push('--input-format', 'stream-json');
+  const child = spawn(cli, args, { cwd: paths.workDir, env: baseEnv(), windowsHide: true });
+  let sent = 0;
+  let turn = 1; // the turn the CLI is answering now
+  let full = '';
+  let sessionId = o.resume || null;
+  let closed = false;
+  let stderr = '';
+  let buf = '';
+  child.stdin.on('error', () => {});
+  child.stdout.on('data', (d) => {
+    buf += d;
+    let nl;
+    while ((nl = buf.indexOf('\n')) >= 0) {
+      const row = buf.slice(0, nl).trim();
+      buf = buf.slice(nl + 1);
+      if (!row) continue;
+      let ev;
+      try {
+        ev = JSON.parse(row);
+      } catch {
+        continue;
+      }
+      if (ev.session_id) sessionId = ev.session_id;
+      if (ev.type === 'stream_event' && ev.event?.type === 'content_block_delta' && ev.event.delta?.type === 'text_delta') {
+        full += ev.event.delta.text;
+        onEvent({ type: 'delta', text: ev.event.delta.text, turn });
+      } else if (ev.type === 'stream_event' && ev.event?.type === 'content_block_start' && ev.event.content_block?.type === 'tool_use') {
+        onEvent({ type: 'tool', name: ev.event.content_block.name, turn });
+      } else if (ev.type === 'result') {
+        if (ev.is_error && ev.subtype !== 'error_during_execution') onEvent({ type: 'error', error: String(ev.result || 'erreur'), authError: isAuthProblem(ev.result), turn });
+        else onEvent({ type: 'done', text: ev.result || full, sessionId, turn, interrupted: ev.subtype === 'error_during_execution' });
+        full = '';
+        turn++;
+      }
+    }
+  });
+  child.stderr.on('data', (d) => (stderr += d));
+  const close = (error) => {
+    if (closed) return;
+    closed = true;
+    onEvent({ type: 'closed', error, sessionId });
+  };
+  child.on('error', (err) => close(err.message));
+  child.on('exit', () => setTimeout(() => close(stderr.trim().slice(0, 300) || null), 200));
+  log(`conversation ${o.model || 'fast'}${o.resume ? ' (suite)' : ''}`);
+  return {
+    send(text) {
+      if (closed) return 0;
+      child.stdin.write(JSON.stringify({ type: 'user', message: { role: 'user', content: String(text) } }) + '\n');
+      return ++sent;
+    },
+    /** Stops the answer being written (the next message is answered right after). */
+    interrupt() {
+      if (closed) return;
+      child.stdin.write(JSON.stringify({ type: 'control_request', request_id: `int-${Date.now()}`, request: { subtype: 'interrupt' } }) + '\n');
+    },
+    close() {
+      if (closed) return;
+      child.stdin.end();
+      setTimeout(() => killTree(child), 3000);
+    },
+  };
+}
+
 /** Opens a terminal running `claude auth login` so the user can sign in once. */
 function openLoginTerminal() {
   const cli = locate();
@@ -437,4 +517,4 @@ function openSession({ cwd, prompt, title = 'Gany', planMode = true }) {
   return true;
 }
 
-module.exports = { locate, authStatus, listMcp, mcpPrefix, run, stream, openLoginTerminal, openSession, cmdQuotable };
+module.exports = { locate, authStatus, listMcp, mcpPrefix, run, stream, conversation, openLoginTerminal, openSession, cmdQuotable };
