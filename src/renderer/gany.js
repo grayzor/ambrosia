@@ -65,6 +65,36 @@ const GOLD_LIGHT = '#F8DC6C';
 const GOLD_DARK = '#9C7410';
 const INK = '#2A2433';
 
+// The wardrobe (src/renderer/wardrobe.js holds the ids, labels and skins; the
+// colours and proportions live here, with the drawing). Unknown ids fall back
+// to the classic Ganymède.
+const CLASSIC_LOOK = { head: 'laurel', glasses: 'none', wings: 'feathers', palette: 'marble', shape: 'soft', face: 'none', extra: 'none', companion: 'none' };
+
+// body: radial gradient (light, middle, shade); rim: the glow at the bottom (r,g,b);
+// wing: feather gradient; line: feather outline.
+const PALETTES = {
+  marble: { body: ['#FFFFFF', '#F2ECE1', '#CFC3AE'], rim: '232,185,35', wing: ['#FFFFFF', '#EDE6D6'], line: 'rgba(184,140,30,0.9)' },
+  // Halloween: a mauve skin lit from below by a pumpkin glow.
+  mauve: { body: ['#F6E6FF', '#CDA6EA', '#8A5DB0'], rim: '242,140,40', wing: ['#F3E4FF', '#C9A8E6'], line: 'rgba(90,50,130,0.9)' },
+  mint: { body: ['#F6FFFA', '#CFF0E1', '#92C7AF'], rim: '232,185,35', wing: ['#FFFFFF', '#DDF3EA'], line: 'rgba(70,140,110,0.9)' },
+  sky: { body: ['#F6FBFF', '#D0E6F7', '#92B6D4'], rim: '150,200,255', wing: ['#FFFFFF', '#DCEBF7'], line: 'rgba(70,110,160,0.9)' },
+  rose: { body: ['#FFF6F9', '#F8D4E0', '#D99AB0'], rim: '232,185,35', wing: ['#FFFFFF', '#F7DDE6'], line: 'rgba(170,80,110,0.9)' },
+  gold: { body: ['#FFF9DE', '#F3D98A', '#C79A30'], rim: '255,240,190', wing: ['#FFFBEA', '#F3DE9A'], line: 'rgba(156,116,16,0.95)' },
+  night: { body: ['#DCDDFF', '#9C9FDC', '#5C5FA0'], rim: '150,170,255', wing: ['#E9EAFF', '#B3B6E8'], line: 'rgba(60,60,120,0.9)' },
+};
+
+// The superellipse of the body: exponent, half-width at the top / bottom, half-height.
+const SHAPES = {
+  soft: { n: 2.6, top: 1.0, bottom: 1.06, ry: 0.97 },
+  round: { n: 2.0, top: 1.0, bottom: 1.02, ry: 1.0 },
+  pear: { n: 2.3, top: 0.88, bottom: 1.16, ry: 0.98 },
+  cube: { n: 4.4, top: 1.0, bottom: 1.0, ry: 0.92 },
+};
+
+// Occasions (logic.occasion) that put a hat on: over the laurel as before,
+// instead of any other headwear.
+const HAT_OCCASIONS = ['noel', 'nouvelan', 'halloween', 'epiphanie', 'paques'];
+
 export class Gany {
   constructor(canvas) {
     this.canvas = canvas;
@@ -90,6 +120,19 @@ export class Gany {
     this.pourK = 1; // 0..1, how far the cup is tipped (mood 'pour')
     this.voice = 0; // 0..1, loudness of his voice (mood 'speak')
     this.voiceNow = 0;
+    this.look = { ...CLASSIC_LOOK };
+  }
+
+  /**
+   * The wardrobe: { head, glasses, wings, palette, shape, face, extra, companion }
+   * as resolved by src/renderer/wardrobe.js (resolve().slots). Missing or unknown
+   * values keep the classic Ganymède.
+   */
+  setLook(slots) {
+    const next = { ...CLASSIC_LOOK, ...(slots || {}) };
+    if (!PALETTES[next.palette]) next.palette = CLASSIC_LOOK.palette;
+    if (!SHAPES[next.shape]) next.shape = CLASSIC_LOOK.shape;
+    this.look = next;
   }
 
   /**
@@ -246,6 +289,11 @@ export class Gany {
     const reach = p.stretch ? Math.max(0, Math.sin(s * 1.3)) ** 2 : 0;
     const sq = this.squish;
 
+    const L = this.look;
+    const pal = PALETTES[L.palette] || PALETTES.marble;
+    // Companions stay out of the tiny sizes (tray, notch): too busy there.
+    const companions = S >= 48 && L.companion !== 'none' ? L.companion : null;
+    if (companions) this.drawCompanions(ctx, cx, cy, R, s, companions, 'back');
     if (p.halo) this.drawHalo(ctx, cx, cy - R * 1.12, R, s);
     if (tap > 0.6) this.drawDust(ctx, cx, cy + R * 0.98, R, tap);
 
@@ -254,16 +302,23 @@ export class Gany {
     ctx.rotate(tilt);
     ctx.scale((1 + sq * 0.12) * (1 - reach * 0.06), (1 - sq * 0.12) * breathe * (1 + reach * 0.1));
 
-    this.drawWings(ctx, R, s, p);
-    this.drawBody(ctx, R);
+    if (L.extra === 'cape') this.drawCape(ctx, R, s);
+    this.drawWings(ctx, R, s, p, pal);
+    this.drawBody(ctx, R, pal);
     if (this.outfit === 'avril') this.drawFish(ctx, R, s);
     ctx.save();
     if (p.crownWiggle) ctx.rotate(Math.sin(s * 7) * 0.08);
-    this.drawWreath(ctx, R);
-    if (this.outfit === 'weekend') this.drawFlowers(ctx, R);
-    else if (this.outfit) this.drawOccasion(ctx, R, s, this.outfit);
+    // A holiday's hat sits on the laurel, or replaces any other headwear; on
+    // Halloween, horns or a witch's hat already do the job.
+    const occ = this.outfit;
+    const spooky = occ === 'halloween' && ['horns', 'witch'].includes(L.head);
+    if (!(occ && HAT_OCCASIONS.includes(occ) && L.head !== 'laurel' && !spooky)) this.drawHead(ctx, R, s, L.head);
+    if (occ === 'weekend') {
+      if (L.head === 'laurel') this.drawFlowers(ctx, R);
+    } else if (occ && !spooky) this.drawOccasion(ctx, R, s, occ);
     ctx.restore();
     this.drawFace(ctx, R, s, p, blinkK);
+    if (L.extra === 'bowtie' || L.extra === 'scarf') this.drawNeckwear(ctx, R, s, L.extra);
     if (p.envelope) this.drawEnvelope(ctx, R, s);
     if (p.hourglass) this.drawHourglass(ctx, R, s, p.hourglass);
     if (p.cup) this.drawCup(ctx, R, s, p.cup);
@@ -284,6 +339,7 @@ export class Gany {
     if (p.sweat) this.drawSweat(ctx, cx + R * 0.85, cy - R * 0.55, R, s);
     if (p.steam) this.drawSteam(ctx, cx, cy - R * 0.9, R, s);
     if (p.waves) this.drawWaves(ctx, cx, cy, R, s);
+    if (companions) this.drawCompanions(ctx, cx, cy, R, s, companions, 'front');
   }
 
   /**
@@ -302,15 +358,16 @@ export class Gany {
   // ── Parts ─────────────────────────────────────────────────────────────────
 
   bodyPath(ctx, R) {
-    // A soft superellipse, a touch wider at the bottom.
+    // A soft superellipse, a touch wider at the bottom (the shape slot changes it).
+    const sh = SHAPES[this.look.shape] || SHAPES.soft;
     ctx.beginPath();
-    const n = 2.6;
+    const n = sh.n;
     for (let i = 0; i <= 64; i++) {
       const a = (i / 64) * TAU;
       const ca = Math.cos(a);
       const sa = Math.sin(a);
-      const rx = R * (sa > 0 ? 1.06 : 1.0);
-      const ry = R * 0.97;
+      const rx = R * (sa > 0 ? sh.bottom : sh.top);
+      const ry = R * sh.ry;
       const x = Math.sign(ca) * Math.pow(Math.abs(ca), 2 / n) * rx;
       const y = Math.sign(sa) * Math.pow(Math.abs(sa), 2 / n) * ry;
       if (i === 0) ctx.moveTo(x, y);
@@ -319,11 +376,11 @@ export class Gany {
     ctx.closePath();
   }
 
-  drawBody(ctx, R) {
+  drawBody(ctx, R, pal = PALETTES.marble) {
     const g = ctx.createRadialGradient(-R * 0.35, -R * 0.45, R * 0.1, 0, 0, R * 1.25);
-    g.addColorStop(0, '#FFFFFF');
-    g.addColorStop(0.55, '#F2ECE1');
-    g.addColorStop(1, '#CFC3AE');
+    g.addColorStop(0, pal.body[0]);
+    g.addColorStop(0.55, pal.body[1]);
+    g.addColorStop(1, pal.body[2]);
     this.bodyPath(ctx, R);
     ctx.fillStyle = g;
     ctx.fill();
@@ -332,8 +389,8 @@ export class Gany {
     this.bodyPath(ctx, R);
     ctx.clip();
     const rim = ctx.createLinearGradient(0, R, 0, R * 0.2);
-    rim.addColorStop(0, 'rgba(232,185,35,0.45)');
-    rim.addColorStop(1, 'rgba(232,185,35,0)');
+    rim.addColorStop(0, `rgba(${pal.rim},0.45)`);
+    rim.addColorStop(1, `rgba(${pal.rim},0)`);
     ctx.fillStyle = rim;
     ctx.fillRect(-R * 1.2, -R, R * 2.4, R * 2.1);
     ctx.restore();
@@ -396,7 +453,9 @@ export class Gany {
     }
   }
 
-  drawWings(ctx, R, s, p) {
+  drawWings(ctx, R, s, p, pal = PALETTES.marble) {
+    const kind = this.look.wings;
+    if (kind === 'none') return;
     const flap = Math.sin(s * p.wingSpeed) * p.wingAmp;
     for (const side of [-1, 1]) {
       let a = -flap + this.wingLiftNow;
@@ -405,6 +464,16 @@ export class Gany {
       ctx.translate(side * R * 0.88, -R * 0.12);
       ctx.scale(side, 1);
       ctx.rotate(-a);
+      if (kind === 'bat') {
+        this.drawBatWing(ctx, R);
+        ctx.restore();
+        continue;
+      }
+      if (kind === 'butterfly') {
+        this.drawButterflyWing(ctx, R, s);
+        ctx.restore();
+        continue;
+      }
       // three feathers
       for (let f = 0; f < 3; f++) {
         const len = R * (0.62 - f * 0.12);
@@ -416,11 +485,11 @@ export class Gany {
         ctx.bezierCurveTo(len * 0.35, -len * 0.32, len * 0.85, -len * 0.22, len, 0);
         ctx.bezierCurveTo(len * 0.8, len * 0.14, len * 0.3, len * 0.18, 0, 0);
         const wg = ctx.createLinearGradient(0, 0, len, 0);
-        wg.addColorStop(0, '#FFFFFF');
-        wg.addColorStop(1, '#EDE6D6');
+        wg.addColorStop(0, pal.wing[0]);
+        wg.addColorStop(1, pal.wing[1]);
         ctx.fillStyle = wg;
         ctx.fill();
-        ctx.strokeStyle = 'rgba(184,140,30,0.9)';
+        ctx.strokeStyle = pal.line;
         ctx.lineWidth = Math.max(0.6, R * 0.025);
         ctx.stroke();
         ctx.restore();
@@ -535,8 +604,11 @@ export class Gany {
       }
     }
 
-    // Weekend shades, over open eyes only
-    if (this.outfit === 'weekend' && !['closed', 'happy', 'spiral', 'heart', 'squint'].includes(p.eye)) this.drawSunglasses(ctx, R, lx, ly);
+    // Glasses of the wardrobe; else the weekend shades, over open eyes only
+    // (and with the laurel: they go with the flower crown).
+    if (this.look.glasses !== 'none') this.drawGlasses(ctx, R, lx, ly, this.look.glasses, s);
+    else if (this.outfit === 'weekend' && this.look.head === 'laurel' && !['closed', 'happy', 'spiral', 'heart', 'squint'].includes(p.eye)) this.drawSunglasses(ctx, R, lx, ly);
+    if (this.look.face === 'freckles') this.drawFreckles(ctx, R, lx);
 
     // mouth
     const mx = lx * 0.6;
@@ -601,6 +673,479 @@ export class Gany {
         ctx.arc(mx, my - R * 0.04, R * 0.1, Math.PI * 0.2, Math.PI * 0.8);
         ctx.stroke();
     }
+    if (this.look.face === 'fangs') this.drawFangs(ctx, R, mx, my, p.mouth);
+    if (this.look.face === 'mustache') this.drawMustache(ctx, R, mx, my);
+  }
+
+  // ── Wardrobe (src/renderer/wardrobe.js) ──────────────────────────────────
+
+  /** The head slot: laurel, horns, witch, beanie, flowers, none. */
+  drawHead(ctx, R, s, kind) {
+    switch (kind) {
+      case 'horns':
+        return this.drawHorns(ctx, R, s);
+      case 'witch':
+        return this.drawWitchHat(ctx, R, s);
+      case 'beanie':
+        return this.drawBeanie(ctx, R, s);
+      case 'flowers':
+        // a green vine under the flowers
+        ctx.save();
+        ctx.strokeStyle = '#5E9E5A';
+        ctx.lineWidth = Math.max(0.6, R * 0.04);
+        ctx.beginPath();
+        ctx.arc(0, 0, R * 0.92, -2.55, -0.59);
+        ctx.stroke();
+        ctx.restore();
+        return this.drawFlowers(ctx, R);
+      case 'none':
+        return undefined;
+      default:
+        return this.drawWreath(ctx, R);
+    }
+  }
+
+  /** Two little curved horns, a touch of crimson. */
+  drawHorns(ctx, R, s) {
+    for (const side of [-1, 1]) {
+      ctx.save();
+      ctx.translate(side * R * 0.44, -R * 0.78);
+      ctx.scale(side, 1);
+      ctx.rotate(0.32 + Math.sin(s * 1.3) * 0.015);
+      const w = R * 0.13;
+      const h = R * 0.5;
+      const g = ctx.createLinearGradient(0, 0, 0, -h);
+      g.addColorStop(0, '#9E2B4E');
+      g.addColorStop(0.7, '#5A1330');
+      g.addColorStop(1, '#2A0717');
+      ctx.beginPath();
+      ctx.moveTo(-w, R * 0.04);
+      ctx.quadraticCurveTo(-w * 0.9, -h * 0.55, R * 0.16, -h);
+      ctx.quadraticCurveTo(w * 1.1, -h * 0.5, w, R * 0.04);
+      ctx.closePath();
+      ctx.fillStyle = g;
+      ctx.fill();
+      ctx.strokeStyle = '#22050F';
+      ctx.lineWidth = Math.max(0.5, R * 0.025);
+      ctx.stroke();
+      // ridges and a glint
+      ctx.strokeStyle = 'rgba(255,190,210,0.35)';
+      ctx.lineWidth = Math.max(0.5, R * 0.018);
+      for (const k of [0.25, 0.5]) {
+        ctx.beginPath();
+        ctx.moveTo(-w * (1 - k * 0.7), -h * k);
+        ctx.quadraticCurveTo(0, -h * k + R * 0.035, w * (1 - k * 0.5), -h * k - R * 0.02);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+  }
+
+  drawWitchHat(ctx, R) {
+    ctx.save();
+    ctx.lineWidth = Math.max(0.6, R * 0.03);
+    ctx.lineJoin = 'round';
+    ctx.fillStyle = '#2B1F3A';
+    ctx.strokeStyle = '#120C1A';
+    ctx.beginPath();
+    ctx.moveTo(-R * 0.5, -R * 0.92);
+    ctx.quadraticCurveTo(-R * 0.1, -R * 1.5, R * 0.15, -R * 1.85);
+    ctx.quadraticCurveTo(R * 0.2, -R * 1.4, R * 0.5, -R * 0.92);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = '#F28C28';
+    ctx.fillRect(-R * 0.46, -R * 1.08, R * 0.92, R * 0.12);
+    ctx.fillStyle = '#2B1F3A';
+    ctx.beginPath();
+    ctx.ellipse(0, -R * 0.9, R * 0.95, R * 0.14, 0, 0, TAU);
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  /** A knitted beanie with its pompom. */
+  drawBeanie(ctx, R, s) {
+    ctx.save();
+    ctx.lineWidth = Math.max(0.5, R * 0.025);
+    const g = ctx.createLinearGradient(0, -R * 1.35, 0, -R * 0.7);
+    g.addColorStop(0, '#F0616D');
+    g.addColorStop(1, '#B3262C');
+    ctx.beginPath();
+    ctx.moveTo(-R * 0.84, -R * 0.68);
+    ctx.bezierCurveTo(-R * 0.86, -R * 1.42, R * 0.86, -R * 1.42, R * 0.84, -R * 0.68);
+    ctx.closePath();
+    ctx.fillStyle = g;
+    ctx.fill();
+    ctx.strokeStyle = '#7A1A20';
+    ctx.stroke();
+    // the cuff, ribbed
+    ctx.fillStyle = '#FFF4E6';
+    roundRect(ctx, -R * 0.9, -R * 0.84, R * 1.8, R * 0.24, R * 0.1);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(160,120,90,0.45)';
+    ctx.stroke();
+    ctx.beginPath();
+    for (let i = -6; i <= 6; i++) {
+      ctx.moveTo(i * R * 0.13, -R * 0.81);
+      ctx.lineTo(i * R * 0.13, -R * 0.63);
+    }
+    ctx.stroke();
+    // pompom, wobbling a little
+    ctx.beginPath();
+    ctx.arc(Math.sin(s * 2) * R * 0.03, -R * 1.3, R * 0.17, 0, TAU);
+    ctx.fillStyle = '#FFF4E6';
+    ctx.fill();
+    ctx.restore();
+  }
+
+  /** Bat wing, in the wing's frame (attached at 0,0, spreading towards +x). */
+  drawBatWing(ctx, R) {
+    const L = R * 0.92;
+    ctx.save();
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    ctx.moveTo(0, -R * 0.06);
+    ctx.quadraticCurveTo(L * 0.2, -L * 0.55, L * 0.52, -L * 0.5); // up to the wrist
+    ctx.quadraticCurveTo(L * 0.8, -L * 0.48, L, -L * 0.22); // to the tip
+    // the scalloped trailing edge
+    ctx.quadraticCurveTo(L * 0.8, -L * 0.14, L * 0.72, L * 0.06);
+    ctx.quadraticCurveTo(L * 0.56, -L * 0.04, L * 0.44, L * 0.14);
+    ctx.quadraticCurveTo(L * 0.28, L * 0.04, L * 0.16, L * 0.16);
+    ctx.quadraticCurveTo(L * 0.06, L * 0.08, 0, R * 0.06);
+    ctx.closePath();
+    const g = ctx.createLinearGradient(0, -L * 0.5, L, L * 0.1);
+    g.addColorStop(0, '#4A2C66');
+    g.addColorStop(1, '#22143A');
+    ctx.fillStyle = g;
+    ctx.fill();
+    ctx.strokeStyle = '#120820';
+    ctx.lineWidth = Math.max(0.6, R * 0.03);
+    ctx.stroke();
+    // finger bones from the wrist
+    ctx.strokeStyle = 'rgba(190,150,230,0.55)';
+    ctx.lineWidth = Math.max(0.5, R * 0.02);
+    ctx.beginPath();
+    for (const [x, y] of [[L, -L * 0.22], [L * 0.72, L * 0.06], [L * 0.44, L * 0.14]]) {
+      ctx.moveTo(L * 0.52, -L * 0.5);
+      ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+    // the little claw
+    ctx.fillStyle = '#120820';
+    ctx.beginPath();
+    ctx.moveTo(L * 0.5, -L * 0.5);
+    ctx.lineTo(L * 0.54, -L * 0.62);
+    ctx.lineTo(L * 0.58, -L * 0.49);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  /** Butterfly wing, same frame as the bat's. */
+  drawButterflyWing(ctx, R, s) {
+    ctx.save();
+    const shimmer = 0.5 + Math.sin(s * 2) * 0.1;
+    for (const [x, y, rx, ry, rot, c0, c1] of [
+      [0.4, -0.28, 0.4, 0.27, -0.55, '#FFD1E1', '#FF8FB1'],
+      [0.3, 0.14, 0.25, 0.17, 0.45, '#E3D6FF', '#B79CFF'],
+    ]) {
+      ctx.beginPath();
+      ctx.ellipse(R * x, R * y, R * rx, R * ry, rot, 0, TAU);
+      const g = ctx.createRadialGradient(R * x * 0.4, R * y * 0.4, R * 0.05, R * x, R * y, R * rx);
+      g.addColorStop(0, c0);
+      g.addColorStop(1, c1);
+      ctx.fillStyle = g;
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(120,70,120,0.7)';
+      ctx.lineWidth = Math.max(0.5, R * 0.022);
+      ctx.stroke();
+    }
+    ctx.fillStyle = `rgba(255,255,255,${shimmer})`;
+    for (const [x, y, r] of [[0.55, -0.36, 0.07], [0.36, -0.2, 0.045], [0.38, 0.17, 0.05]]) {
+      ctx.beginPath();
+      ctx.arc(R * x, R * y, R * r, 0, TAU);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  /** The glasses slot, drawn over the eyes whatever they do. */
+  drawGlasses(ctx, R, lx, ly, kind) {
+    if (kind === 'sun') return this.drawSunglasses(ctx, R, lx, ly);
+    const ey = -R * 0.02 + ly;
+    ctx.save();
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    if (kind === 'monocle') {
+      const x = R * 0.36 + lx;
+      ctx.beginPath();
+      ctx.arc(x, ey, R * 0.21, 0, TAU);
+      ctx.fillStyle = 'rgba(255,255,255,0.2)';
+      ctx.fill();
+      ctx.strokeStyle = GOLD_DARK;
+      ctx.lineWidth = Math.max(0.8, R * 0.05);
+      ctx.stroke();
+      ctx.strokeStyle = GOLD;
+      ctx.lineWidth = Math.max(0.5, R * 0.022);
+      ctx.beginPath();
+      ctx.moveTo(x + R * 0.15, ey + R * 0.15);
+      ctx.quadraticCurveTo(x + R * 0.35, ey + R * 0.55, x + R * 0.12, ey + R * 0.72);
+      ctx.stroke();
+      ctx.restore();
+      return;
+    }
+    const frame = kind === 'square' ? INK : kind === 'heart' ? '#D6336C' : GOLD_DARK;
+    ctx.strokeStyle = frame;
+    ctx.lineWidth = Math.max(0.8, R * (kind === 'square' ? 0.055 : 0.042));
+    for (const side of [-1, 1]) {
+      const x = side * R * 0.36 + lx;
+      ctx.beginPath();
+      if (kind === 'square') roundRect(ctx, x - R * 0.2, ey - R * 0.15, R * 0.4, R * 0.3, R * 0.06);
+      else if (kind === 'heart') heartPath(ctx, x, ey + R * 0.02, R * 0.2);
+      else ctx.arc(x, ey, R * 0.19, 0, TAU);
+      ctx.fillStyle = kind === 'heart' ? 'rgba(255,120,160,0.28)' : 'rgba(255,255,255,0.18)';
+      ctx.fill();
+      ctx.stroke();
+      // the temple, towards the ear
+      ctx.beginPath();
+      ctx.moveTo(x + side * R * 0.19, ey - R * 0.04);
+      ctx.lineTo(x + side * R * 0.34, ey - R * 0.08);
+      ctx.stroke();
+    }
+    // the bridge
+    ctx.beginPath();
+    ctx.moveTo(-R * 0.17 + lx, ey - R * 0.02);
+    ctx.quadraticCurveTo(lx, ey - R * 0.1, R * 0.17 + lx, ey - R * 0.02);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  drawFreckles(ctx, R, lx) {
+    ctx.save();
+    ctx.fillStyle = 'rgba(170,100,70,0.6)';
+    for (const side of [-1, 1]) {
+      for (const [dx, dy] of [[-0.06, -0.03], [0.03, -0.05], [0.07, 0.02], [-0.02, 0.03]]) {
+        ctx.beginPath();
+        ctx.arc(side * R * 0.58 + lx * 0.3 + side * dx * R, R * 0.24 + dy * R, Math.max(0.5, R * 0.022), 0, TAU);
+        ctx.fill();
+      }
+    }
+    ctx.restore();
+  }
+
+  /** Two little vampire fangs, hanging from the top of the mouth. */
+  drawFangs(ctx, R, mx, my, mouth) {
+    const top = { smile: 0.045, flat: 0.02, grin: -0.015, o: -0.03, frown: 0.03, pout: 0.03, wavy: 0.02, talk: 0.0, yawn: -0.07 }[mouth] ?? 0.045;
+    const spread = mouth === 'grin' ? 0.075 : mouth === 'yawn' ? 0.06 : 0.05;
+    ctx.save();
+    ctx.fillStyle = '#FFFFFF';
+    ctx.strokeStyle = INK;
+    ctx.lineWidth = Math.max(0.4, R * 0.014);
+    ctx.lineJoin = 'round';
+    for (const side of [-1, 1]) {
+      const x = mx + side * R * spread;
+      const y = my + R * top;
+      ctx.beginPath();
+      ctx.moveTo(x - R * 0.026, y);
+      ctx.lineTo(x + R * 0.026, y);
+      ctx.lineTo(x + side * R * 0.004, y + R * 0.075);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  drawMustache(ctx, R, mx, my) {
+    ctx.save();
+    ctx.fillStyle = '#4A3426';
+    for (const side of [-1, 1]) {
+      ctx.beginPath();
+      ctx.moveTo(mx, my - R * 0.06);
+      ctx.bezierCurveTo(mx + side * R * 0.08, my - R * 0.13, mx + side * R * 0.18, my - R * 0.05, mx + side * R * 0.23, my - R * 0.12);
+      ctx.bezierCurveTo(mx + side * R * 0.22, my - R * 0.01, mx + side * R * 0.08, my - R * 0.0, mx, my - R * 0.03);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  /** A vampire's cape, behind him: the tall collar shows beside the head. */
+  drawCape(ctx, R, s) {
+    const sway = Math.sin(s * 1.4) * R * 0.03;
+    ctx.save();
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = Math.max(0.6, R * 0.03);
+    // the cloak
+    ctx.beginPath();
+    ctx.moveTo(-R * 0.75, -R * 0.3);
+    ctx.lineTo(-R * 1.2 - sway, R * 1.0);
+    for (let i = 0; i < 4; i++) {
+      const x0 = -R * 1.2 + (i / 4) * R * 2.4;
+      ctx.quadraticCurveTo(x0 + R * 0.3, R * 0.9, x0 + R * 0.6 + (i === 3 ? sway : 0), R * 1.04);
+    }
+    ctx.lineTo(R * 0.75, -R * 0.3);
+    ctx.closePath();
+    ctx.fillStyle = '#1C1226';
+    ctx.fill();
+    ctx.strokeStyle = '#0B0612';
+    ctx.stroke();
+    // the collar, black outside and red inside
+    for (const side of [-1, 1]) {
+      ctx.beginPath();
+      ctx.moveTo(side * R * 0.3, -R * 0.55);
+      ctx.lineTo(side * R * 1.2, -R * 0.82);
+      ctx.lineTo(side * R * 1.02, -R * 0.12);
+      ctx.closePath();
+      ctx.fillStyle = '#1C1226';
+      ctx.fill();
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(side * R * 0.42, -R * 0.53);
+      ctx.lineTo(side * R * 1.1, -R * 0.74);
+      ctx.lineTo(side * R * 0.95, -R * 0.24);
+      ctx.closePath();
+      ctx.fillStyle = '#B3262C';
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  /** Bow tie or scarf, low on the body. */
+  drawNeckwear(ctx, R, s, kind) {
+    ctx.save();
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = Math.max(0.5, R * 0.022);
+    if (kind === 'bowtie') {
+      const y = R * 0.66;
+      ctx.fillStyle = '#2B3A8F';
+      ctx.strokeStyle = '#151D4A';
+      for (const side of [-1, 1]) {
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(side * R * 0.22, y - R * 0.12);
+        ctx.quadraticCurveTo(side * R * 0.27, y, side * R * 0.22, y + R * 0.12);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+      }
+      roundRect(ctx, -R * 0.05, y - R * 0.06, R * 0.1, R * 0.12, R * 0.03);
+      ctx.fill();
+      ctx.stroke();
+    } else {
+      // scarf: a striped band hugging the body, a tail on the side
+      ctx.save();
+      this.bodyPath(ctx, R);
+      ctx.clip();
+      ctx.fillStyle = '#E5484D';
+      ctx.fillRect(-R * 1.3, R * 0.5, R * 2.6, R * 0.22);
+      ctx.fillStyle = '#FFF4E6';
+      for (let i = -6; i <= 6; i += 2) ctx.fillRect(i * R * 0.14, R * 0.5, R * 0.07, R * 0.22);
+      ctx.restore();
+      ctx.save();
+      ctx.translate(R * 0.5, R * 0.62);
+      ctx.rotate(-0.15 + Math.sin(s * 1.8) * 0.05);
+      ctx.fillStyle = '#E5484D';
+      roundRect(ctx, 0, 0, R * 0.2, R * 0.5, R * 0.05);
+      ctx.fill();
+      ctx.fillStyle = '#FFF4E6';
+      ctx.fillRect(0, R * 0.14, R * 0.2, R * 0.06);
+      ctx.fillRect(0, R * 0.3, R * 0.2, R * 0.06);
+      ctx.restore();
+    }
+    ctx.restore();
+  }
+
+  /**
+   * Companions, in screen space: two bats circling (behind him on the far half
+   * of the loop), a floating jack-o'-lantern, or fireflies.
+   */
+  drawCompanions(ctx, cx, cy, R, s, kind, layer) {
+    ctx.save();
+    if (kind === 'bats') {
+      for (let i = 0; i < 2; i++) {
+        const a = s * 0.8 + i * Math.PI;
+        const front = Math.sin(a) > 0;
+        if ((layer === 'front') !== front) continue;
+        const x = cx + Math.cos(a) * R * 1.55;
+        // the near half of the loop passes high, over the horns, never on his face
+        const y = cy - R * 1.2 - Math.sin(a) * R * 0.28 + Math.sin(s * 5 + i) * R * 0.05;
+        const k = R * (front ? 0.17 : 0.12);
+        const flap = Math.sin(s * 16 + i * 2);
+        ctx.fillStyle = front ? '#2A1838' : 'rgba(42,24,56,0.7)';
+        for (const side of [-1, 1]) {
+          ctx.beginPath();
+          ctx.moveTo(x, y);
+          ctx.quadraticCurveTo(x + side * k * 0.8, y - k * (0.9 * flap + 0.2), x + side * k * 1.6, y - k * 0.2 * flap);
+          ctx.quadraticCurveTo(x + side * k * 1.1, y + k * 0.15, x + side * k * 0.9, y + k * 0.35);
+          ctx.quadraticCurveTo(x + side * k * 0.55, y + k * 0.15, x, y + k * 0.3);
+          ctx.fill();
+        }
+        ctx.beginPath();
+        ctx.ellipse(x, y + k * 0.1, k * 0.32, k * 0.4, 0, 0, TAU);
+        ctx.fill();
+        // two ears
+        ctx.beginPath();
+        ctx.moveTo(x - k * 0.25, y - k * 0.2);
+        ctx.lineTo(x - k * 0.18, y - k * 0.55);
+        ctx.lineTo(x - k * 0.05, y - k * 0.25);
+        ctx.moveTo(x + k * 0.25, y - k * 0.2);
+        ctx.lineTo(x + k * 0.18, y - k * 0.55);
+        ctx.lineTo(x + k * 0.05, y - k * 0.25);
+        ctx.fill();
+        if (front) {
+          ctx.fillStyle = '#F8DC6C';
+          for (const side of [-1, 1]) {
+            ctx.beginPath();
+            ctx.arc(x + side * k * 0.12, y, Math.max(0.5, k * 0.07), 0, TAU);
+            ctx.fill();
+          }
+        }
+      }
+    } else if (kind === 'pumpkin' && layer === 'front') {
+      const x = cx - R * 1.32;
+      const y = cy + R * 0.7 + Math.sin(s * 2.2) * R * 0.06;
+      const k = R * 0.3;
+      ctx.translate(x, y);
+      ctx.rotate(Math.sin(s * 1.5) * 0.08);
+      ctx.shadowColor = 'rgba(242,140,40,0.7)';
+      ctx.shadowBlur = k * 0.8;
+      for (const [dx, rx] of [[-0.45, 0.55], [0.45, 0.55], [0, 0.6]]) {
+        ctx.beginPath();
+        ctx.ellipse(dx * k, 0, rx * k, k * 0.82, 0, 0, TAU);
+        ctx.fillStyle = dx ? '#D96A12' : '#F28C28';
+        ctx.fill();
+      }
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = '#4E7A2E';
+      ctx.fillRect(-k * 0.08, -k * 1.05, k * 0.16, k * 0.3);
+      // a carved face, lit from inside
+      ctx.fillStyle = `rgba(255,${200 + Math.round(Math.sin(s * 9) * 30)},90,1)`;
+      for (const side of [-1, 1]) {
+        ctx.beginPath();
+        ctx.moveTo(side * k * 0.42, -k * 0.12);
+        ctx.lineTo(side * k * 0.18, -k * 0.12);
+        ctx.lineTo(side * k * 0.3, -k * 0.38);
+        ctx.fill();
+      }
+      ctx.beginPath();
+      ctx.moveTo(-k * 0.45, k * 0.15);
+      ctx.quadraticCurveTo(0, k * 0.6, k * 0.45, k * 0.15);
+      ctx.quadraticCurveTo(0, k * 0.35, -k * 0.45, k * 0.15);
+      ctx.fill();
+    } else if (kind === 'fireflies' && layer === 'front') {
+      for (let i = 0; i < 5; i++) {
+        const x = cx + Math.sin(s * (0.5 + i * 0.13) + i * 2.1) * R * 1.5;
+        const y = cy - R * 0.2 + Math.cos(s * (0.4 + i * 0.11) + i * 1.3) * R * 0.95;
+        const glow = 0.4 + 0.6 * Math.max(0, Math.sin(s * 2.4 + i * 1.7));
+        ctx.shadowColor = `rgba(220,255,120,${glow})`;
+        ctx.shadowBlur = R * 0.25;
+        ctx.fillStyle = `rgba(230,255,150,${glow})`;
+        ctx.beginPath();
+        ctx.arc(x, y, Math.max(0.8, R * 0.045), 0, TAU);
+        ctx.fill();
+      }
+    }
+    ctx.restore();
   }
 
   drawEnvelope(ctx, R, s) {
@@ -733,26 +1278,9 @@ export class Gany {
         }
         break;
       }
-      case 'halloween': {
-        // A witch's hat
-        ctx.fillStyle = '#2B1F3A';
-        ctx.strokeStyle = '#120C1A';
-        ctx.beginPath();
-        ctx.moveTo(-R * 0.5, -R * 0.92);
-        ctx.quadraticCurveTo(-R * 0.1, -R * 1.5, R * 0.15, -R * 1.85);
-        ctx.quadraticCurveTo(R * 0.2, -R * 1.4, R * 0.5, -R * 0.92);
-        ctx.closePath();
-        ctx.fill();
-        ctx.stroke();
-        ctx.fillStyle = '#F28C28';
-        ctx.fillRect(-R * 0.46, -R * 1.08, R * 0.92, R * 0.12);
-        ctx.fillStyle = '#2B1F3A';
-        ctx.beginPath();
-        ctx.ellipse(0, -R * 0.9, R * 0.95, R * 0.14, 0, 0, TAU);
-        ctx.fill();
-        ctx.stroke();
+      case 'halloween':
+        this.drawWitchHat(ctx, R);
         break;
-      }
       case 'valentin':
         heart(ctx, 0, -R * 1.02, R * 0.16 * (1 + Math.sin(s * 6) * 0.1), '#E5484D');
         break;
@@ -1196,6 +1724,14 @@ function heart(ctx, x, y, k, color) {
   ctx.fillStyle = color;
   ctx.fill();
   ctx.restore();
+}
+
+/** The outline of a heart (for frames: fill and stroke it yourself). */
+function heartPath(ctx, x, y, k) {
+  ctx.moveTo(x, y + k * 0.8);
+  ctx.bezierCurveTo(x - k * 1.4, y - k * 0.2, x - k * 0.6, y - k * 1.2, x, y - k * 0.45);
+  ctx.bezierCurveTo(x + k * 0.6, y - k * 1.2, x + k * 1.4, y - k * 0.2, x, y + k * 0.8);
+  ctx.closePath();
 }
 
 function star(ctx, x, y, k, color) {

@@ -4,6 +4,8 @@
 
 import { h, mount } from '../renderer/ui.js';
 import { Gany } from '../renderer/gany.js';
+import { Sound } from '../renderer/sound.js';
+import '../renderer/wardrobe.js'; // plain script: globalThis.AmbrosiaWardrobe
 
 const api = window.ambrosia;
 
@@ -93,6 +95,7 @@ const CORE = [
 ];
 
 const S = { settings: {}, modules: [], current: location.hash.slice(1) || 'general' };
+let logo = null; // Gany in the corner, dressed like in the island
 
 function sections() {
   return [
@@ -197,6 +200,8 @@ function field(section, f) {
     }
     case 'hooks':
       return hooksPanel();
+    case 'wardrobe':
+      return wardrobePanel(section, f, flag);
     case 'display': {
       // The screens plugged in now, asked to the main process.
       const select = h('select.text', { onchange: (e) => save(section, f.key, e.target.value, flag) }, h('option', { value: value ?? '' }, '…'));
@@ -272,6 +277,110 @@ function hooksPanel() {
     );
   };
   refresh();
+  return box;
+}
+
+// ── Gany's wardrobe (src/renderer/wardrobe.js): skins, slots, live preview ──
+
+const Wardrobe = globalThis.AmbrosiaWardrobe;
+const PREVIEW_MOODS = [['idle', 'Au repos'], ['working', 'Au travail'], ['approval', 'Approbation'], ['finished', 'Terminé'], ['mail', 'Un mail'], ['sleeping', 'Endormi']];
+let dressing = []; // the Gany instances of the panel, stopped when it is redrawn
+let previewMood = 'idle';
+
+function stopWardrobe() {
+  for (const g of dressing) g.stop();
+  dressing = [];
+}
+
+function miniGany(slots, { size = 64, mood = 'idle', fps = 30 } = {}) {
+  const c = h('canvas', { style: { width: size + 'px', height: size + 'px' } });
+  const g = new Gany(c);
+  g.setLook(slots);
+  g.setMood(mood);
+  g.setFps(fps);
+  dressing.push(g);
+  // started once the canvas is in the page (it needs its CSS size)
+  requestAnimationFrame(() => g.start());
+  c.addEventListener('mousemove', (e) => g.look(e.offsetX - size / 2, e.offsetY - size / 2));
+  return { canvas: c, gany: g };
+}
+
+const until = ([m, d]) => new Date(2000, m - 1, d).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' });
+
+function wardrobePanel(section, f, flag) {
+  const box = h('div.field.wardrobe');
+  const draw = () => {
+    stopWardrobe();
+    const look = Wardrobe.normalize(S.settings[section]?.[f.key]);
+    const now = new Date();
+    const r = Wardrobe.resolve(look, { date: now, soundTheme: S.settings[section]?.soundTheme });
+    const base = Wardrobe.skinById(r.skin);
+    const season = Wardrobe.SEASONS.find((x) => x.id === r.season);
+    const seasonal = Wardrobe.seasonalSkin(now);
+    const set = (next) => save(section, f.key, next, flag).then(draw);
+
+    const preview = miniGany(r.slots, { size: 168, mood: previewMood, fps: 60 });
+    logo?.setLook(r.slots);
+    const status = r.auto
+      ? season
+        ? `Selon la saison : ${base.label}, jusqu’au ${until(season.to)}.`
+        : `Selon la saison : ${base.label}.`
+      : `Skin choisi : ${base.label}.`;
+    const tweaks = r.overridden.length ? ` ${r.overridden.length} retouche${r.overridden.length > 1 ? 's' : ''} à la main.` : '';
+
+    const skinCard = (skin, { auto = false } = {}) => {
+      const sel = auto ? r.auto : !r.auto && r.skin === skin.id;
+      return h('button.wd-skin' + (sel ? '.sel' : ''), { title: auto ? 'Le skin de la saison, Ganymède le reste de l’année' : skin.label, onclick: () => set(auto ? Wardrobe.reset() : Wardrobe.chooseSkin(look, skin.id)) },
+        miniGany(skin.slots, { size: 58 }).canvas,
+        h('span', auto ? 'Selon la saison' : skin.label),
+        auto ? h('span.wd-sub', seasonal.id === 'classic' ? 'Ganymède' : seasonal.label) : null,
+      );
+    };
+
+    const slotRow = (slot) => {
+      const mine = r.overridden.includes(slot.id);
+      return h('div.wd-slot',
+        h('div.wd-slot-l', slot.label, mine ? h('button.wd-undo', { title: `Revenir à celui du skin ${base.label}`, onclick: () => set(Wardrobe.chooseSlot(look, slot.id, null, { date: now })) }, '↺') : null),
+        h('div.wd-opts', slot.options.map(([v, label]) =>
+          h('button.wd-opt' + (r.slots[slot.id] === v ? '.sel' : '') + (mine && r.slots[slot.id] === v ? '.mine' : ''), { onclick: () => set(Wardrobe.chooseSlot(look, slot.id, v, { date: now })) }, label),
+        )),
+      );
+    };
+
+    mount(box,
+      h('label.l', f.label, flag),
+      h('div.wd-top',
+        h('div.wd-stage',
+          preview.canvas,
+          h('div.wd-moods', PREVIEW_MOODS.map(([m, label]) =>
+            h('button.wd-opt' + (previewMood === m ? '.sel' : ''), { onclick: (e) => {
+              previewMood = m;
+              preview.gany.setMood(m);
+              for (const b of e.target.parentNode.children) b.classList.toggle('sel', b === e.target);
+            } }, label),
+          )),
+        ),
+        h('div.wd-side',
+          h('div.status', h('span.state-dot', { style: { '--c': r.auto ? 'var(--gold)' : 'var(--ok)' } }), status + tweaks),
+          h('div.help', 'Un skin habille Gany de la tête aux pieds ; chaque pièce se change ensuite à la main. Sans choix de ta part, Gany suit la saison (Halloween en octobre). Les fêtes ajoutent encore leur chapeau.'),
+          h('div.wd-skins', skinCard(seasonal, { auto: true }), Wardrobe.SKINS.map((k) => skinCard(k))),
+          h('div.btns', { style: { marginTop: '10px' } },
+            h('button.btn', { disabled: r.auto && !r.overridden.length, onclick: () => set(Wardrobe.reset()) }, 'Remettre à zéro (selon la saison)'),
+            h('button.btn', {
+              title: 'Le petit air d’accueil, dans le thème des sons en place',
+              onclick: () => {
+                const theme = Wardrobe.resolve(S.settings[section]?.[f.key], { soundTheme: S.settings[section]?.soundTheme }).sound;
+                Sound.configure({ ...(S.settings.general || {}), sounds: true });
+                Sound.play('greet', { theme });
+              },
+            }, '▶ Écouter les sons'),
+          ),
+        ),
+      ),
+      h('div.wd-slots', Wardrobe.SLOTS.map(slotRow)),
+    );
+  };
+  draw();
   return box;
 }
 
@@ -371,6 +480,7 @@ function cliPanel() {
 }
 
 function render() {
+  stopWardrobe();
   renderNav();
   const sec = sections().find((s) => s.id === S.current) || sections()[0];
   const content = document.getElementById('content');
@@ -387,8 +497,9 @@ async function boot() {
   const b = await api.core('boot');
   S.settings = b.settings;
   S.modules = b.modules;
+  logo = new Gany(document.getElementById('logo'));
+  logo.setLook(Wardrobe.resolve(S.settings.gany?.look).slots);
   render();
-  const logo = new Gany(document.getElementById('logo'));
   logo.start();
   logo.setFps(30);
   api.on('goto', go);

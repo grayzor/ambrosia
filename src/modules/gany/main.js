@@ -10,11 +10,14 @@
 //   * Days of the year: holidays and fêtes (a hat, a phrase), pushed in the state.
 //   * Focus: from the right-click menu, Gany makes himself tiny for a while and
 //     only the urgent gets through (the « en appel » queue of the module host).
+//   * Wardrobe: skins and accessories (src/renderer/wardrobe.js), Halloween by
+//     default in October; Réglages → Gany → Apparence (settings.js « wardrobe »).
 // The island side (src/renderer/island.js) handles the rest: idle animations,
 // weekend outfit, petting, phrases, glances, confetti.
 
 const MIN = 60000;
 const logic = require('./logic');
+const wardrobe = require('../../renderer/wardrobe');
 
 const MORNING_LINES = [
   'Que les dieux te soient favorables aujourd’hui.',
@@ -49,6 +52,16 @@ module.exports = {
   color: '#E8B923',
   order: 90,
   settings: [
+    // Skin and accessories: { skin: null | id, slots: {} }; null = the season decides.
+    { key: 'look', label: 'Apparence de Gany', type: 'wardrobe', default: wardrobe.reset() },
+    {
+      key: 'soundTheme',
+      label: 'Thème des sons',
+      type: 'select',
+      default: 'auto',
+      options: wardrobe.SOUND_THEMES,
+      help: 'Les mêmes sons aux mêmes moments, dans une autre ambiance. « Selon le skin » : la harpe hantée avec le skin Halloween (par défaut en octobre), la lyre sinon.',
+    },
     {
       key: 'launch',
       label: 'Arrivée de Gany au démarrage',
