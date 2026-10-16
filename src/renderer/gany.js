@@ -120,7 +120,7 @@ export class Gany {
     this.pourK = 1; // 0..1, how far the cup is tipped (mood 'pour')
     this.voice = 0; // 0..1, loudness of his voice (mood 'speak')
     this.voiceNow = 0;
-    this.look = { ...CLASSIC_LOOK };
+    this.wardrobe = { ...CLASSIC_LOOK };
   }
 
   /**
@@ -132,7 +132,7 @@ export class Gany {
     const next = { ...CLASSIC_LOOK, ...(slots || {}) };
     if (!PALETTES[next.palette]) next.palette = CLASSIC_LOOK.palette;
     if (!SHAPES[next.shape]) next.shape = CLASSIC_LOOK.shape;
-    this.look = next;
+    this.wardrobe = next;
   }
 
   /**
@@ -289,7 +289,7 @@ export class Gany {
     const reach = p.stretch ? Math.max(0, Math.sin(s * 1.3)) ** 2 : 0;
     const sq = this.squish;
 
-    const L = this.look;
+    const L = this.wardrobe;
     const pal = PALETTES[L.palette] || PALETTES.marble;
     // Companions stay out of the tiny sizes (tray, notch): too busy there.
     const companions = S >= 48 && L.companion !== 'none' ? L.companion : null;
@@ -359,7 +359,7 @@ export class Gany {
 
   bodyPath(ctx, R) {
     // A soft superellipse, a touch wider at the bottom (the shape slot changes it).
-    const sh = SHAPES[this.look.shape] || SHAPES.soft;
+    const sh = SHAPES[this.wardrobe.shape] || SHAPES.soft;
     ctx.beginPath();
     const n = sh.n;
     for (let i = 0; i <= 64; i++) {
@@ -454,7 +454,7 @@ export class Gany {
   }
 
   drawWings(ctx, R, s, p, pal = PALETTES.marble) {
-    const kind = this.look.wings;
+    const kind = this.wardrobe.wings;
     if (kind === 'none') return;
     const flap = Math.sin(s * p.wingSpeed) * p.wingAmp;
     for (const side of [-1, 1]) {
@@ -606,9 +606,9 @@ export class Gany {
 
     // Glasses of the wardrobe; else the weekend shades, over open eyes only
     // (and with the laurel: they go with the flower crown).
-    if (this.look.glasses !== 'none') this.drawGlasses(ctx, R, lx, ly, this.look.glasses, s);
-    else if (this.outfit === 'weekend' && this.look.head === 'laurel' && !['closed', 'happy', 'spiral', 'heart', 'squint'].includes(p.eye)) this.drawSunglasses(ctx, R, lx, ly);
-    if (this.look.face === 'freckles') this.drawFreckles(ctx, R, lx);
+    if (this.wardrobe.glasses !== 'none') this.drawGlasses(ctx, R, lx, ly, this.wardrobe.glasses, s);
+    else if (this.outfit === 'weekend' && this.wardrobe.head === 'laurel' && !['closed', 'happy', 'spiral', 'heart', 'squint'].includes(p.eye)) this.drawSunglasses(ctx, R, lx, ly);
+    if (this.wardrobe.face === 'freckles') this.drawFreckles(ctx, R, lx);
 
     // mouth
     const mx = lx * 0.6;
@@ -673,8 +673,8 @@ export class Gany {
         ctx.arc(mx, my - R * 0.04, R * 0.1, Math.PI * 0.2, Math.PI * 0.8);
         ctx.stroke();
     }
-    if (this.look.face === 'fangs') this.drawFangs(ctx, R, mx, my, p.mouth);
-    if (this.look.face === 'mustache') this.drawMustache(ctx, R, mx, my);
+    if (this.wardrobe.face === 'fangs') this.drawFangs(ctx, R, mx, my, p.mouth);
+    if (this.wardrobe.face === 'mustache') this.drawMustache(ctx, R, mx, my);
   }
 
   // ── Wardrobe (src/renderer/wardrobe.js) ──────────────────────────────────

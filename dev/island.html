@@ -196,6 +196,8 @@
     };
     const emit = (ch, data) => (handlers[ch] || []).forEach((fn) => fn(data));
     for (const [id, f] of Object.entries(extra)) f.connect?.((state) => emit('state', { id, state }), emit);
+    // The main process sends the pointer to the island all the time (main.js → 'cursor'): Gany's eyes follow it.
+    addEventListener('mousemove', (e) => emit('cursor', { x: e.clientX, y: e.clientY, sx: e.screenX, sy: e.screenY }));
     // ?launch=full|short|off: which entrance plays on load (default: none after the first load of the tab)
     const q = new URLSearchParams(location.search);
     if (q.get('launch')) {

@@ -117,6 +117,15 @@ test('gany.js draws every palette and shape the wardrobe offers', () => {
   assert.deepEqual(JSON.parse(classic), W.CLASSIC);
 });
 
+test('no field of Gany hides one of his methods (this.look once replaced look(dx, dy))', () => {
+  const src = fs.readFileSync(path.join(__dirname, '../src/renderer/gany.js'), 'utf8');
+  const body = src.slice(src.indexOf('export class Gany'), src.indexOf('\nfunction heart('));
+  const methods = new Set([...body.matchAll(/^ {2}(?:get |set )?(\w+)\([^)]*\) \{$/gm)].map((m) => m[1]));
+  const fields = new Set([...body.matchAll(/this\.(\w+) =[^=]/g)].map((m) => m[1]));
+  assert.ok(methods.has('look') && methods.has('setLook') && fields.has('wardrobe'));
+  assert.deepEqual([...fields].filter((f) => methods.has(f)), []);
+});
+
 test('the gany module declares the look and the sound theme', () => {
   const def = require('../src/modules/gany/main.js');
   const look = def.settings.find((s) => s.key === 'look');
