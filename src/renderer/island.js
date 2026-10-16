@@ -1375,7 +1375,7 @@ function startLaunch(kind = 'full') {
     island,
     kind,
     words,
-    dress: { outfit: gany.outfit, energy: gany.energy, look: gany.look },
+    dress: { outfit: gany.outfit, energy: gany.energy, look: gany.wardrobe },
     rest: () => {
       const cs = getComputedStyle(canvas);
       return { ...lastSize, gx: parseFloat(cs.left) || 8, gy: parseFloat(cs.top) || 1, gs: parseFloat(cs.width) || 28, hidden: S.mode === 'line' };
@@ -1412,7 +1412,7 @@ function sendTrayIcon() {
   c.width = c.height = 32;
   const ctx = c.getContext('2d');
   const g = new Gany(c);
-  g.setLook(gany.look);
+  g.setLook(gany.wardrobe);
   g.draw(performance.now(), ctx, 32);
   api.send('tray-icon', c.toDataURL('image/png'));
 }
