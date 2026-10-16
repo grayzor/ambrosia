@@ -12,6 +12,9 @@ import { Sound } from './sound.js';
 import { h, mount, ago, clip, markdown } from './ui.js';
 import { Launch, launchKind, reducedMotion } from './launch.js';
 import { VoicePlayer } from './voice.js';
+import './wardrobe.js'; // plain script: globalThis.AmbrosiaWardrobe (also required by the gany module)
+
+const Wardrobe = globalThis.AmbrosiaWardrobe;
 
 const api = window.ambrosia;
 const $ = (s) => document.querySelector(s);
@@ -489,8 +492,21 @@ api.on('react', ({ mood, ms, sound, confetti: party }) => {
 });
 
 // ── Outfit and energy ─────────────────────────────────────────────────────
+// The wardrobe (Réglages → Gany → Apparence): the skin the user chose, else the
+// season's (Halloween in October), plus what they changed by hand. The sound
+// theme follows (src/renderer/wardrobe.js → resolve). Holidays and the weekend
+// still add their hat or flowers on top (gany.js decides what fits together).
+let lookKey = '';
 function dressGany() {
   const now = new Date();
+  const look = Wardrobe.resolve(S.settings.gany?.look, { date: now, soundTheme: S.settings.gany?.soundTheme });
+  gany.setLook(look.slots);
+  Sound.setTheme(look.sound);
+  const key = JSON.stringify(look.slots);
+  if (key !== lookKey) {
+    lookKey = key;
+    sendTrayIcon();
+  }
   const day = now.getDay();
   const weekend = (day === 5 && now.getHours() >= 14) || day === 6 || day === 0;
   // A holiday's hat wins over the weekend flowers (src/modules/gany/logic.js → occasion).
@@ -1247,6 +1263,7 @@ api.on('settings', (settings) => {
   Sound.configure(settings.general || {});
   voice.setMuted(settings.general?.sounds === false);
   S.modules = S.modules.map((m) => ({ ...m, enabled: settings[m.id]?.enabled !== false }));
+  dressGany();
   if (S.mode === 'open') renderOpen();
   renderNotch();
   updateMood();
@@ -1335,8 +1352,7 @@ async function boot() {
   voice.setMuted(b.settings.general?.sounds === false);
   await loadViews();
   renderNotch();
-  sendTrayIcon();
-  dressGany();
+  dressGany(); // draws the tray icon too, in his outfit
   const kind = launchKind(S.settings.gany?.launch);
   if (kind && !reducedMotion()) startLaunch(kind);
   else if (kind) quietGreeting();
@@ -1359,7 +1375,7 @@ function startLaunch(kind = 'full') {
     island,
     kind,
     words,
-    dress: { outfit: gany.outfit, energy: gany.energy },
+    dress: { outfit: gany.outfit, energy: gany.energy, look: gany.look },
     rest: () => {
       const cs = getComputedStyle(canvas);
       return { ...lastSize, gx: parseFloat(cs.left) || 8, gy: parseFloat(cs.top) || 1, gs: parseFloat(cs.width) || 28, hidden: S.mode === 'line' };
@@ -1396,6 +1412,7 @@ function sendTrayIcon() {
   c.width = c.height = 32;
   const ctx = c.getContext('2d');
   const g = new Gany(c);
+  g.setLook(gany.look);
   g.draw(performance.now(), ctx, 32);
   api.send('tray-icon', c.toDataURL('image/png'));
 }

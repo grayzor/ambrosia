@@ -362,6 +362,16 @@
           setState('gany', { occasion: outfit ? { id: outfit, outfit, phrase } : null });
         };
       })()],
+      // Gany's wardrobe (src/renderer/wardrobe.js): « selon la saison », then every skin.
+      ['skin suivant', (() => {
+        const skins = [null, ...globalThis.AmbrosiaWardrobe.SKINS.map((s) => s.id)];
+        let i = 0;
+        return () => {
+          const skin = skins[(i = (i + 1) % skins.length)];
+          fixtures.settings.gany = { ...fixtures.settings.gany, look: { skin, slots: {} } };
+          emit('settings', fixtures.settings);
+        };
+      })()],
       ['pause : boire', () => pushAlert({ key: 'gany:break', module: 'gany', title: 'Une gorgée d’eau ?', text: '3 h sans pause. Même les dieux s’hydratent.', mood: 'drink', priority: 25, ttl: 12 })],
     ]) {
       bar.append(Object.assign(document.createElement('button'), { textContent: label, onclick: fn }));

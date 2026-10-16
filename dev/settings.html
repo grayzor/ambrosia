@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <title>Réglages — Ambrosia (aperçu)</title>
+  <link rel="stylesheet" href="/src/renderer/style.css">
+  <link rel="stylesheet" href="/src/settings/settings.css">
+</head>
+<body>
+  <aside id="nav">
+    <div id="brand"><canvas id="logo"></canvas><div><div class="b1">Ambrosia</div><div class="b2 faint small">Gany veille sur l’Olympe</div></div></div>
+    <div id="sections"></div>
+  </aside>
+  <main id="content"></main>
+
+  <!-- The settings window with a fake window.ambrosia: dev/settings.html#gany opens
+       Gany's wardrobe. Settings live in memory (lost on reload); ?skin=halloween
+       starts with a chosen skin. Only the Gany module is listed. -->
+  <script src="/src/renderer/wardrobe.js"></script>
+  <script>
+    (function () {
+      const W = globalThis.AmbrosiaWardrobe;
+      const q = new URLSearchParams(location.search);
+      const settings = {
+        general: { sounds: true, volume: 0.5 },
+        gany: { enabled: true, look: { skin: q.get('skin') || null, slots: {} }, soundTheme: 'auto', launch: 'daily', weekendOutfit: true, occasions: true },
+      };
+      const gany = {
+        id: 'gany', name: 'Gany', icon: '☺', color: '#E8B923',
+        settings: [
+          { key: 'look', label: 'Apparence de Gany', type: 'wardrobe', default: W.reset() },
+          { key: 'soundTheme', label: 'Thème des sons', type: 'select', default: 'auto', options: W.SOUND_THEMES },
+          { key: 'weekendOutfit', label: 'Tenue du week-end (vendredi après-midi)', type: 'boolean', default: true },
+          { key: 'occasions', label: 'Fêtes et jours fériés', type: 'boolean', default: true },
+        ],
+      };
+      const core = {
+        boot: () => ({ settings, modules: [gany] }),
+        setSettings: ({ section, patch }) => (settings[section] = { ...settings[section], ...patch }),
+        logPath: () => '',
+        displays: () => [],
+      };
+      window.ambrosia = {
+        on: () => () => {},
+        action: async () => null,
+        core: async (name, payload) => (core[name] ? core[name](payload) : null),
+        send() {},
+      };
+      if (!location.hash) location.hash = 'gany';
+    })();
+  </script>
+  <script type="module" src="/src/settings/settings.js"></script>
+</body>
+</html>

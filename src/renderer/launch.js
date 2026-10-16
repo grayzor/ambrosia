@@ -93,6 +93,7 @@ export class Launch {
     this.offCtx = this.off.getContext('2d');
     this.gany = new Gany(this.off);
     this.gany.setOutfit(dress.outfit);
+    this.gany.setLook(dress.look);
     this.gany.setEnergy(dress.energy);
     this.frieze = this.kind === 'full' ? this.makeFrieze() : null;
 
