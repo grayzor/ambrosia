@@ -15,6 +15,7 @@
 const fs = require('fs');
 const path = require('path');
 const { clipboard, nativeImage } = require('electron');
+const Clip = require('../../main/clip');
 const { store } = require('../../main/store');
 const paths = require('../../main/paths');
 const speech = require('../../main/speech');
@@ -203,9 +204,9 @@ module.exports = {
       if (focus) ctx.focus(false);
       return attachments.length;
     });
-    ctx.onAction('attachClipboard', () => {
-      const img = clipboard.readImage();
-      if (img.isEmpty()) return false;
+    ctx.onAction('attachClipboard', async () => {
+      const img = await Clip.readImage().catch((err) => (ctx.log('clipboard', err.message), null));
+      if (!img) return false;
       attach([saveImage(img)]);
       ctx.focus(false);
       return true;

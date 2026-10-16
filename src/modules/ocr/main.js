@@ -13,6 +13,7 @@ const path = require('path');
 const { clipboard, nativeImage } = require('electron');
 const paths = require('../../main/paths');
 const foreground = require('../../main/foreground');
+const Clip = require('../../main/clip');
 const { recognize } = require('./winocr');
 const logic = require('./logic');
 
@@ -119,9 +120,14 @@ module.exports = {
       return file;
     }
 
-    function readClipboard() {
-      const img = clipboard.readImage();
-      if (img.isEmpty()) {
+    async function readClipboard() {
+      let img = null;
+      try {
+        img = await Clip.readImage();
+      } catch (err) {
+        ctx.log('clipboard', err.message);
+      }
+      if (!img) {
         ctx.alert({ key: 'noimage', title: 'Pas d’image dans le presse-papiers', text: 'Copie une image (Win+Maj+S) puis redemande-moi.', mood: 'question', priority: 40, ttl: 5 });
         return false;
       }
@@ -165,8 +171,10 @@ module.exports = {
     ctx.onAction('copyImage', ({ id } = {}) => {
       const it = find(id);
       if (!it || !fs.existsSync(it.image)) return false;
-      clipboard.writeImage(nativeImage.createFromPath(it.image));
-      return true;
+      return Clip.writeImage(nativeImage.createFromPath(it.image)).then(
+        () => true,
+        (err) => (ctx.log('copyImage', err.message), false),
+      );
     });
     ctx.onAction('remove', ({ id } = {}) => {
       items = items.filter((i) => i.id !== id);
