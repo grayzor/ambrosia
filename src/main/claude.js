@@ -17,6 +17,25 @@ const log = require('./log').scope('claude');
 
 let cachedPath = null;
 
+// Every turn of the CLI ends with a `rate_limit_event` carrying the plan's real
+// 5-hour and weekly use (`rate_limit_info.unifiedWindows`). Claude Desktop never
+// runs the statusLine, so Ambrosia's own calls are the steady source of the gauges.
+const rateListeners = new Set();
+function onRateLimits(fn) {
+  rateListeners.add(fn);
+  return () => rateListeners.delete(fn);
+}
+function rateEvent(ev) {
+  if (ev?.type !== 'rate_limit_event' || !ev.rate_limit_info) return;
+  for (const fn of rateListeners) {
+    try {
+      fn(ev.rate_limit_info);
+    } catch (err) {
+      log('rate limits listener', err);
+    }
+  }
+}
+
 function versionKey(v) {
   return v.split('.').map((n) => n.padStart(6, '0')).join('.');
 }
@@ -227,6 +246,7 @@ async function runOnce(o, warmupMs, abortIfPending = false) {
           if (!row.startsWith('{')) continue;
           try {
             const ev = JSON.parse(row);
+            rateEvent(ev);
             if (ev.type === 'system' && ev.subtype === 'init') {
               mcpServers = ev.mcp_servers || [];
               const needed = o.requireMcp && mcpServers.find((m) => m.name === o.requireMcp);
@@ -357,6 +377,7 @@ function stream(o, onEvent) {
         continue;
       }
       if (ev.session_id) sessionId = ev.session_id;
+      rateEvent(ev);
       if (ev.type === 'stream_event' && ev.event?.type === 'content_block_delta' && ev.event.delta?.type === 'text_delta') {
         full += ev.event.delta.text;
         onEvent({ type: 'delta', text: ev.event.delta.text });
@@ -427,6 +448,7 @@ function conversation(o, onEvent) {
         continue;
       }
       if (ev.session_id) sessionId = ev.session_id;
+      rateEvent(ev);
       if (ev.type === 'stream_event' && ev.event?.type === 'content_block_delta' && ev.event.delta?.type === 'text_delta') {
         full += ev.event.delta.text;
         onEvent({ type: 'delta', text: ev.event.delta.text, turn });
@@ -517,4 +539,4 @@ function openSession({ cwd, prompt, title = 'Gany', planMode = true }) {
   return true;
 }
 
-module.exports = { locate, authStatus, listMcp, mcpPrefix, run, stream, conversation, openLoginTerminal, openSession, cmdQuotable };
+module.exports = { locate, authStatus, listMcp, mcpPrefix, run, stream, conversation, onRateLimits, openLoginTerminal, openSession, cmdQuotable };

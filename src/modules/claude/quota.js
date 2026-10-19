@@ -3,7 +3,9 @@
 // Source: the statusLine relay (hook/ambrosia-statusline.js), which forwards
 // `rate_limits.five_hour` / `seven_day` = { used_percentage 0–100, resets_at
 // (epoch seconds) }. Claude Code only sends them to Pro/Max subscribers, after
-// the first API answer of a session. Without them, a fallback counts today's
+// the first API answer of a session, and Claude Desktop never runs the statusLine:
+// so every `claude -p` turn of Ambrosia's own also feeds them, from the CLI's
+// `rate_limit_event` (fromCli). Without either, a fallback counts today's
 // tokens per project from the transcripts (~/.claude/projects/**/*.jsonl), with
 // no percentage. Pure logic except scanUsage (fs only), tested in tests/quota.test.js.
 
@@ -14,6 +16,26 @@ const WINDOWS = [
   ['five_hour', '5 h'],
   ['seven_day', 'Semaine'],
 ];
+
+/**
+ * The CLI's `rate_limit_event.rate_limit_info` (`unifiedWindows.<key>.utilization`
+ * 0–1, `resetsAt` epoch seconds; or one window in `rateLimitType` / `utilization`)
+ * in the statusLine shape `ingest` reads. null when it carries no usable window.
+ */
+function fromCli(info) {
+  if (!info || typeof info !== 'object') return null;
+  const windows = info.unifiedWindows && typeof info.unifiedWindows === 'object'
+    ? info.unifiedWindows
+    : info.rateLimitType ? { [info.rateLimitType]: { utilization: info.utilization, resetsAt: info.resetsAt } } : {};
+  const out = {};
+  for (const [key] of WINDOWS) {
+    const w = windows[key];
+    const u = Number(w?.utilization);
+    if (w == null || w.utilization == null || !Number.isFinite(u)) continue;
+    out[key] = { used_percentage: Math.round(u * 1000) / 10, resets_at: Number(w.resetsAt) || 0 };
+  }
+  return Object.keys(out).length ? out : null;
+}
 
 const empty = () => ({ five_hour: null, seven_day: null, updatedAt: 0, warned: {}, celebrated: {} });
 
@@ -213,4 +235,4 @@ function tokens(n) {
   return String(n);
 }
 
-module.exports = { WINDOWS, SPAN, empty, ingest, tick, markHit, gauges, countdown, scanUsage, usageList, tokens, dayKey };
+module.exports = { WINDOWS, SPAN, empty, fromCli, ingest, tick, markHit, gauges, countdown, scanUsage, usageList, tokens, dayKey };
