@@ -81,6 +81,12 @@ function proposalBox(m, ui, L) {
   );
 }
 
+/** « 3 traités dans Gmail » : the cards Gany closed because the user handled them there. */
+function settledLabel(st, lead) {
+  const n = st.settledToday || 0;
+  return n && st.settleSource ? `${lead}${n} ${n > 1 ? 'traités' : 'traité'} dans ${st.settleSource}` : '';
+}
+
 export function triageView(L) {
   const STATUS = {
     checking: `Gany parcourt ${L.where || L.source}…`,
@@ -93,9 +99,14 @@ export function triageView(L) {
     const { h, ago } = ui;
     const s = st.stats || {};
     const text = (st.status === 'ok' && st.proposing ? 'Gany prépare une proposition…' : '') || STATUS[st.status] || (st.lastCheck ? `Vérifié ${ago(st.lastCheck)}` : '');
+    const line = [
+      text,
+      s.checked ? ` · ${plural(s.checked, L.one, L.many)} ${agree(L, 'trié', s.checked)} aujourd’hui, ${s.important || 0} ${agree(L, 'retenu', s.important || 0)}` : '',
+      settledLabel(st, ', '),
+    ].join('');
     return h('div.row', { style: { margin: '0 2px 8px' } },
-      h('span.small.dim.grow.ellipsis', text, s.checked ? ` · ${plural(s.checked, L.one, L.many)} ${agree(L, 'trié', s.checked)} aujourd’hui, ${s.important || 0} ${agree(L, 'retenu', s.important || 0)}` : ''),
-      st.doneToday ? h('button.btn.sm.ghost', { title: 'Remettre le dernier élément traité dans la liste', onclick: () => ui.action('undoDone') }, 'Annuler') : null,
+      h('span.small.dim.grow.ellipsis', { title: line }, line),
+      st.doneToday ? h('button.btn.sm.ghost', { title: 'Remettre le dernier élément traité dans la liste (Gany ne la retirera plus de lui-même)', onclick: () => ui.action('undoDone') }, 'Annuler') : null,
       (st.items || []).length ? h('button.btn.sm.ghost', { onclick: () => ui.action('doneAll') }, 'Tout traité') : null,
       h('button.btn.sm', { disabled: !!st.checking, onclick: () => { ui.sound.play('tick'); ui.action('refresh'); } }, st.checking ? '…' : 'Vérifier'),
     );
@@ -145,7 +156,7 @@ export function triageView(L) {
 
       const items = st.items || [];
       if (!items.length) {
-        root.append(h('div.empty', st.doneToday ? `Tout est traité (${st.doneToday} aujourd’hui). Gany garde l’œil ouvert.` : st.lastCheck ? 'Rien d’important. Gany garde l’œil ouvert.' : `${L.feminine ? 'Aucune' : 'Aucun'} ${L.one} ${agree(L, 'trié', 1)} pour l’instant.`));
+        root.append(h('div.empty', st.doneToday ? `Tout est traité (${st.doneToday} aujourd’hui${settledLabel(st, ', dont ')}). Gany garde l’œil ouvert.` : st.lastCheck ? 'Rien d’important. Gany garde l’œil ouvert.' : `${L.feminine ? 'Aucune' : 'Aucun'} ${L.one} ${agree(L, 'trié', 1)} pour l’instant.`));
         return;
       }
       const list = h('div.list');

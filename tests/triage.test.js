@@ -264,3 +264,140 @@ test('the hand-off prompt survives cmd.exe quoting', () => {
   const { cmdQuotable } = require('../src/main/claude');
   assert.equal(cmdQuotable('a "b" %PATH% !x!\r\nc\\'), 'a ’b’  PATH   x  c');
 });
+
+// ── Handled at the source (cfg.settle) ──
+
+const SETTLE = { settle: { how: ['read', 'replied'], onRead: 'lu = traité' } };
+const openCard = (id, extra = {}) => ({ id, from: 'Alice <alice@x.fr>', title: `t-${id}`, verdict: 'important', reason: 'r', at: Date.now() - 600000, read: false, ...extra });
+const stored = (items) => ({ seen: {}, items, feedback: [], lastCheck: Date.now() - 300000, connector: 'claude.ai Src', stats: {} });
+
+test('settle: the open cards are listed, and the ones handled at the source go silently', async () => {
+  const t = harness(
+    [{ found: 0, items: [], settled: [{ id: 'a', how: 'replied' }, { id: 'zz', how: 'read' }] }],
+    {},
+    stored([openCard('a'), openCard('b'), openCard('c', { done: true })]),
+    SETTLE,
+  );
+  await t.act('refresh');
+  const p = t.prompts[0].prompt;
+  assert.match(p, /Cartes encore ouvertes/);
+  assert.match(p, /id=a · .*Alice · « t-a »/);
+  assert.doesNotMatch(p, /id=c/);
+  assert.match(p, /settled = /);
+  assert.ok(t.prompts[0].jsonSchema.properties.settled);
+  assert.ok(t.prompts[0].jsonSchema.properties.items.items.properties.handled);
+  assert.deepEqual(t.state().items.map((i) => i.id), ['b']);
+  assert.equal(t.state().unread, 1);
+  assert.equal(t.state().settledToday, 1);
+  const a = t.data.items.find((i) => i.id === 'a');
+  assert.equal(a.doneBy, 'source');
+  assert.equal(a.doneHow, 'replied');
+  assert.equal(t.state().stats.settled, 1);
+  assert.equal(t.alerts.length, 0);
+});
+
+test('settle: a new item already handled at the source is no card and no alert; it closes its conversation', async () => {
+  const t = harness(
+    [{ found: 2, items: [{ ...item('m2', 'urgent'), handled: true }, item('n', 'important')] }],
+    {},
+    stored([openCard('m1', { group: 'g1' })]),
+    { ...SETTLE, groupBy: (r) => (r.id.startsWith('m') ? 'g1' : '') },
+  );
+  await t.act('refresh');
+  assert.deepEqual(t.state().items.map((i) => i.id), ['n']);
+  assert.equal(t.data.items.find((i) => i.id === 'm1').doneBy, 'source');
+  assert.equal(t.alerts.length, 1);
+  assert.equal(t.alerts[0].key, 'n');
+});
+
+test('settle: « Annuler » brings a card back for good, Gany never closes it again', async () => {
+  const t = harness(
+    [{ found: 0, items: [], settled: [{ id: 'a', how: 'read' }] }, { found: 0, items: [], settled: [{ id: 'a', how: 'read' }] }],
+    {},
+    stored([openCard('a')]),
+    SETTLE,
+  );
+  await t.act('refresh');
+  assert.equal(t.state().items.length, 0);
+  await t.act('undoDone');
+  const a = t.data.items[0];
+  assert.equal(a.keep, true);
+  assert.equal(a.doneBy, undefined);
+  await t.act('refresh');
+  assert.deepEqual(t.state().items.map((i) => i.id), ['a']);
+});
+
+test('settle: off in Réglages, nothing is asked nor closed', async () => {
+  const t = harness([{ found: 0, items: [], settled: [{ id: 'a', how: 'read' }] }], { settle: false }, stored([openCard('a')]), SETTLE);
+  await t.act('refresh');
+  assert.doesNotMatch(t.prompts[0].prompt, /Cartes encore ouvertes/);
+  assert.equal(t.state().items.length, 1);
+});
+
+test('settle: the switches are in Réglages, « lu = traité » only where the source can tell', () => {
+  const def = triage({ id: 't', name: 'T', source: 'Src', connectorPattern: /x/, readTools: [], steps: () => '', labels: {}, ...SETTLE });
+  assert.ok(def.settings.find((s) => s.key === 'settle'));
+  assert.equal(def.settings.find((s) => s.key === 'settleOnRead').label, 'lu = traité');
+  const other = triage({ id: 't', name: 'T', source: 'Src', connectorPattern: /x/, readTools: [], steps: () => '', labels: {}, settle: { how: ['closed'] } });
+  assert.ok(!other.settings.find((s) => s.key === 'settleOnRead'));
+  const none = triage({ id: 't', name: 'T', source: 'Src', connectorPattern: /x/, readTools: [], steps: () => '', labels: {} });
+  assert.ok(!none.settings.find((s) => s.key === 'settle'));
+});
+
+test('settle: the steps get the open cards and the oldest time; « Ouvrir » brings the next check closer', async () => {
+  let got;
+  const t = harness([{ found: 0, items: [] }], {}, stored([openCard('a', { srcAt: Date.UTC(2026, 9, 20, 7) })]), {
+    ...SETTLE,
+    steps: (c) => ((got = c), 'steps'),
+  });
+  await t.act('refresh');
+  assert.equal(got.settle, true);
+  assert.deepEqual(got.open.map((i) => i.id), ['a']);
+  assert.equal(got.openSince, Date.UTC(2026, 9, 20, 7));
+  // Next check planned in 10 min; the user goes to the source: it comes in 4.
+  assert.ok(t.state().nextCheck - Date.now() > 9 * 60000);
+  t.data.items[0].url = 'https://src.example/a';
+  await t.act('open', { id: 'a' });
+  assert.deepEqual(t.opened, ['https://src.example/a']);
+  assert.ok(t.state().nextCheck - Date.now() <= 4 * 60000);
+});
+
+test('topics: one card per subject in a check; a later item on an open subject replaces it', async () => {
+  const { mergeTopics, topicKey } = require('../src/main/triage');
+  assert.equal(topicKey('Accès HelpDesk — coupons'), topicKey('acces helpdesk coupons'));
+  const merged = mergeTopics([{ ...item('a', 'important'), topic: 'Bascule ATLAS' }, { ...item('b', 'urgent'), topic: 'bascule atlas' }, item('c', 'important')], (r) => `g-${r.id}`);
+  assert.equal(merged.length, 2);
+  const kept = merged.find((i) => i.id === 'b');
+  assert.equal(kept.count, 2);
+  assert.deepEqual(kept.groups.sort(), ['g-a', 'g-b']);
+});
+
+test('adjust has the last word on a verdict', async () => {
+  const t = harness([{ found: 2, items: [item('a', 'important'), item('b', 'important')] }], { vip: ['Alice'] }, undefined, {
+    adjust: (r, v) => (r.id === 'a' ? 'normal' : v),
+  });
+  await t.act('refresh');
+  assert.deepEqual(t.state().items.map((i) => i.id), ['b']);
+});
+
+test('Courrier: read, answered or archived in Gmail closes the card', () => {
+  const { mailSteps } = require('../src/modules/mail/main');
+  const since = Date.UTC(2026, 9, 20, 8);
+  const base = { since, settings: { query: 'in:inbox' }, settle: true };
+  const none = mailSteps({ ...base, open: [] });
+  assert.match(none, /UNREAD/);
+  assert.doesNotMatch(none, /Étape 3/);
+  const open = mailSteps({ ...base, open: [{ id: 'th1' }], openSince: since - 3600000 });
+  assert.match(open, /in:inbox is:unread after:\d+/);
+  assert.match(open, /nextPageToken, ne conclus rien/);
+  const strict = mailSteps({ ...base, settings: { query: 'in:inbox', settleOnRead: false }, open: [{ id: 'th1' }] });
+  assert.doesNotMatch(strict, /is:unread/);
+  assert.match(strict, /SENT/);
+  assert.doesNotMatch(mailSteps({ since, settings: { query: '' } }), /handled/);
+});
+
+test('ClickUp: a comment, a status, a closed task or a done reminder closes the card', () => {
+  const clickup = require('../src/modules/clickup/main');
+  assert.ok(clickup.settings.find((s) => s.key === 'settle'));
+  assert.ok(!clickup.settings.find((s) => s.key === 'settleOnRead'));
+});
