@@ -295,12 +295,24 @@ module.exports = {
       ctx.alert({ key: 'quota-back', title: 'Le forfait Claude est rechargé', text, mood: 'relief', sound: 'finish', priority: 50, confetti: st.quotaConfetti !== false, ttl: 10 });
     }
 
+    /** Plan gauges in the statusLine shape, from the statusLine relay or a CLI turn. */
+    function ingestRateLimits(rl) {
+      quotaEvents(Q.ingest(data.quota, rl, Date.now(), Number(ctx.settings().quotaWarnAt) || 0));
+      Harvest.recordQuota(data.days, new Date(), rl.five_hour?.used_percentage, rl.seven_day?.used_percentage);
+    }
+
+    // Claude Desktop runs no statusLine: Ambrosia's own `claude -p` turns (agenda,
+    // triage…) report the same windows in their rate_limit_event.
+    this._rateOff = ctx.claude.onRateLimits?.((info) => {
+      const rl = Q.fromCli(info);
+      if (!rl) return;
+      ingestRateLimits(rl);
+      save();
+      publish();
+    });
+
     function onStatusLine(p) {
-      const st = ctx.settings();
-      if (p.rate_limits) {
-        quotaEvents(Q.ingest(data.quota, p.rate_limits, Date.now(), Number(st.quotaWarnAt) || 0));
-        Harvest.recordQuota(data.days, new Date(), p.rate_limits.five_hour?.used_percentage, p.rate_limits.seven_day?.used_percentage);
-      }
+      if (p.rate_limits) ingestRateLimits(p.rate_limits);
       const s = sessions.get(p.session_id);
       if (s) {
         if (p.context?.used_percentage != null) s.contextPct = Math.round(p.context.used_percentage);
@@ -1293,6 +1305,7 @@ module.exports = {
     // Never leave a hook hanging: whatever is still open goes back to the terminal.
     for (const p of this._pending || []) p.event.reply({ decision: 'pass' });
     this._off?.();
+    this._rateOff?.();
     clearInterval(this._prune);
     clearInterval(this._quota);
     clearInterval(this._usage);

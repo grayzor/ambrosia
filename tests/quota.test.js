@@ -98,3 +98,28 @@ test('fallback: today’s tokens per project from the transcripts, deduplicated 
   assert.deepEqual(Q.usageList(cache).map((p) => [p.project, p.tokens]), [['ambrosia', 160], ['data-lab', 10]]);
   assert.equal(Q.tokens(1234567), '1,2 M');
 });
+
+test('fromCli reads the rate_limit_event of a CLI turn in the statusLine shape', () => {
+  const info = {
+    status: 'allowed',
+    resetsAt: 1792447800,
+    rateLimitType: 'five_hour',
+    unifiedWindows: { five_hour: { utilization: 0.23, resetsAt: 1792447800 }, seven_day: { utilization: 0.4567, resetsAt: 1792598400 } },
+  };
+  assert.deepEqual(Q.fromCli(info), {
+    five_hour: { used_percentage: 23, resets_at: 1792447800 },
+    seven_day: { used_percentage: 45.7, resets_at: 1792598400 },
+  });
+  // One window only, without unifiedWindows.
+  assert.deepEqual(Q.fromCli({ rateLimitType: 'seven_day', utilization: 0.9, resetsAt: 1792598400 }), {
+    seven_day: { used_percentage: 90, resets_at: 1792598400 },
+  });
+  assert.equal(Q.fromCli({ status: 'allowed' }), null);
+  assert.equal(Q.fromCli({ unifiedWindows: { five_hour: { resetsAt: 1 } } }), null);
+  assert.equal(Q.fromCli(null), null);
+  // Fed to ingest, it gives the real percentage.
+  const q = Q.empty();
+  Q.ingest(q, Q.fromCli(info), 1792440000000, 80);
+  assert.equal(Q.gauges(q, 1792440000000)[0].pct, 23);
+  assert.equal(Q.gauges(q, 1792440000000)[1].pct, 46);
+});

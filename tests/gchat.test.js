@@ -47,6 +47,7 @@ function harness(answers, settingsPatch = {}, stored = {}) {
   const defaults = Object.fromEntries(gchat.settings.filter((s) => 'default' in s).map((s) => [s.key, s.default]));
   const settings = { ...defaults, activeHours: '0-24', weekends: true, ...settingsPatch };
   const data = { seen: {}, items: [], feedback: [], lastCheck: 0, connector: 'claude.ai Chat MCP', connectorSource: 'Google Chat', stats: {}, ...stored };
+  if (settingsPatch.via === 'mails') Object.assign(data, { connector: 'claude.ai Gmail', connectorSource: 'Gmail' });
   const actions = new Map();
   const runs = [];
   let state = {};
@@ -172,16 +173,97 @@ test('bursts: a person’s messages that each start a thread in a space are one 
   assert.equal(merged[0].count, 5);
 });
 
-test('steps: one element per topic, never one per line; the open cards are given to continue', () => {
+test('steps: one element per topic, even across conversations; the open cards are given to continue', async () => {
   const since = Date.UTC(2026, 9, 14, 8);
-  const data = { items: [{ id: 'spaces/D/messages/1', group: 'spaces/D', from: 'Maud <m@x.fr>', title: 'Accès HelpDesk', summary: 'Donner l’accès coupons' }, { id: 'x', group: 'spaces/E', from: 'Old', title: 'Fini', done: true }] };
-  const text = gchat.steps({ since, settings: { me: '', spaces: false }, data });
+  const text = gchat.steps({ since, settings: { me: '', spaces: false }, data: {} });
   assert.match(text, /jamais un élément par message/);
+  assert.match(text, /plusieurs conversations, fils ou personnes/);
   assert.match(text, /count = le nombre de messages/);
-  assert.match(text, /spaces\/D · Maud · « Accès HelpDesk »/);
-  assert.doesNotMatch(text, /Fini/);
-  assert.doesNotMatch(gchat.steps({ since, settings: { me: '', spaces: false }, data: { items: [] } }), /Cartes déjà signalées/);
-  assert.match(gchat.mailSteps({ since, data }), /jamais un par ligne/);
+  assert.match(gchat.mailSteps({ since }), /jamais un par ligne/);
+  // The engine lists the open cards (not the done ones), with their subject.
+  const items = [
+    { id: 'spaces/D/messages/1', group: 'spaces/D', topic: 'accès helpdesk coupons', from: 'Maud <m@x.fr>', title: 'Accès HelpDesk', summary: 'Donner l’accès coupons', verdict: 'important', at: since },
+    { id: 'x', group: 'spaces/E', from: 'Old', title: 'Fini', verdict: 'important', done: true, at: since },
+  ];
+  const t = harness([{ found: 0, items: [] }], {}, { items, lastCheck: since });
+  await t.act('refresh');
+  const p = t.runs[0].prompt;
+  assert.match(p, /id=spaces\/D\/messages\/1 · clé=spaces\/D · sujet=accès helpdesk coupons · .* · Maud · « Accès HelpDesk »/);
+  assert.doesNotMatch(p, /Fini/);
+  assert.match(p, /topic = exactement son sujet=/);
+});
+
+test('spaces ("salons"): only what is addressed to the user; DMs: everything', () => {
+  const { adjust } = gchat;
+  assert.equal(adjust({ kind: 'space', to_me: 'direct' }, 'important'), 'important');
+  assert.equal(adjust({ kind: 'space', to_me: 'reply' }, 'urgent'), 'urgent');
+  assert.equal(adjust({ kind: 'space', to_me: 'cc' }, 'important'), 'normal');
+  assert.equal(adjust({ kind: 'space', to_me: 'all' }, 'urgent'), 'normal');
+  assert.equal(adjust({ kind: 'space', to_me: 'group' }, 'important'), 'normal');
+  assert.equal(adjust({ kind: 'group', to_me: 'group' }, 'important'), 'important');
+  assert.equal(adjust({ kind: 'group', to_me: 'none' }, 'important'), 'normal');
+  assert.equal(adjust({ kind: 'dm', to_me: 'none' }, 'important'), 'important');
+  assert.equal(adjust({ kind: 'space', to_me: 'cc' }, 'noise'), 'noise');
+  // The prompt explains a mention in copy, and @all.
+  const text = gchat.steps({ since: Date.now(), settings: {}, data: { meUser: 'users/42' } });
+  assert.match(text, /data-user="users\/42"/);
+  assert.match(text, /users\/all/);
+  assert.match(text, /s'adresse à Paul, pas à l'utilisateur/);
+});
+
+test('a space mention in copy never becomes a card, even from a VIP', async () => {
+  const S = 'spaces/S';
+  const t = harness([{ found: 2, me_user: 'users/42', items: [
+    { id: `${S}/messages/a.a`, space: S, thread: `${S}/threads/a`, kind: 'space', to_me: 'cc', from: 'Hélène <h@x.fr>', title: 'Coupons ATLAS', verdict: 'important', reason: 'Mention' },
+    { id: `${S}/messages/b.b`, space: S, thread: `${S}/threads/b`, kind: 'space', to_me: 'direct', from: 'Hélène <h@x.fr>', title: 'Accès HelpDesk', verdict: 'important', reason: 'Question pour toi' },
+  ] }], { vip: ['Hélène'] });
+  await t.act('refresh');
+  assert.deepEqual(t.data.items.map((i) => i.title), ['Accès HelpDesk']);
+  assert.equal(t.data.meUser, 'users/42');
+});
+
+test('read in Google Chat: the open card goes silently, a message already read never alerts', async () => {
+  const D = 'spaces/D';
+  const alerts = [];
+  const dismissed = [];
+  const open = { id: `${D}/messages/1`, group: D, from: 'Maud <m@x.fr>', title: 'Accès HelpDesk', verdict: 'important', at: Date.now() - 600000, read: false };
+  const t = harness([{ found: 2, settled: [{ id: open.id, how: 'read' }, { id: 'spaces/X/messages/9', how: 'read' }], items: [
+    { id: 'spaces/E/messages/5', space: 'spaces/E', kind: 'dm', from: 'Zoé <z@x.fr>', title: 'Déjà vu', verdict: 'urgent', reason: 'r', handled: true },
+  ] }], {}, { items: [open], lastCheck: Date.now() - 300000 });
+  t.ctx.alert = (a) => alerts.push(a);
+  t.ctx.dismissAlert = (k) => dismissed.push(k);
+  await t.act('refresh');
+  assert.match(t.runs[0].prompt, /"isUnread":true/);
+  assert.equal(t.state().items.length, 0);
+  assert.equal(t.state().unread, 0);
+  assert.equal(t.state().settledToday, 1);
+  assert.equal(t.state().settleSource, 'Google Chat');
+  assert.equal(t.data.items[0].doneBy, 'source');
+  assert.deepEqual(dismissed, [open.id]);
+  assert.equal(alerts.length, 0);
+});
+
+test('through the reminder mails, nothing is closed for the user (they say nothing of what was read)', async () => {
+  const open = { id: 'm1', group: 'mail:dm:camille', from: 'Camille', title: 'Compte', verdict: 'important', at: Date.now() - 600000 };
+  const t = harness([{ found: 0, items: [], settled: [{ id: 'm1', how: 'read' }] }], { via: 'mails' }, { items: [open], lastCheck: Date.now() - 300000 });
+  await t.act('refresh');
+  assert.doesNotMatch(t.runs[0].prompt, /settled =/);
+  assert.equal(t.state().items.length, 1);
+});
+
+test('one subject over two conversations is one card; a later message on it replaces the open card', async () => {
+  const a = { id: 'spaces/A/messages/1', space: 'spaces/A', kind: 'dm', from: 'Maud <m@x.fr>', title: 'Incident ATLAS', topic: 'Incident ATLAS prod', verdict: 'important', reason: 'r' };
+  const b = { id: 'spaces/B/messages/2', space: 'spaces/B', thread: 'spaces/B/threads/t', kind: 'space', to_me: 'direct', from: 'Hugo <h@x.fr>', title: 'ATLAS', topic: 'incident atlas prod', verdict: 'urgent', reason: 'r' };
+  const c = { id: 'spaces/C/messages/3', space: 'spaces/C', kind: 'dm', from: 'Inès <i@x.fr>', title: 'ATLAS toujours KO', topic: 'incident atlas prod', verdict: 'important', reason: 'r' };
+  const t = harness([{ found: 2, items: [a, b] }, { found: 1, items: [c] }]);
+  await t.act('refresh');
+  assert.equal(t.data.items.length, 1);
+  assert.equal(t.data.items[0].id, b.id);
+  assert.equal(t.data.items[0].messages, 2);
+  await t.act('refresh');
+  assert.equal(t.data.items.length, 1);
+  assert.equal(t.data.items[0].id, c.id);
+  assert.equal(t.data.items[0].messages, 3);
 });
 
 test('a follow-up replaces the open card of its conversation, adds up its messages, and comes without a sound', async () => {

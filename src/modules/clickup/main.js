@@ -56,7 +56,14 @@ module.exports = triage({
   onStructured: (out, data) => {
     if (/^\d+$/.test(out.me_id || '')) data.meId = out.me_id;
   },
-  steps: ({ since, data }) =>
+  // Commented, moved, closed, reassigned, reminder done in ClickUp: the card goes.
+  // Merely opening the task leaves no trace the connector can read.
+  settle: {
+    how: ['replied', 'status', 'closed', 'reassigned', 'resolved'],
+    describe: (i) => (i.status ? `statut ${i.status}` : ''),
+  },
+  itemFields: { status: { type: 'string', description: 'Le statut actuel de la tâche' } },
+  steps: ({ since, data, open = [], settle }) =>
     [
       `Fenêtre : uniquement ce qui s'est passé depuis ${fmt(since)} (timestamp ms ${since}).`,
       data.meId
@@ -66,12 +73,25 @@ module.exports = triage({
       `Étape 2 : appelle clickup_filter_tasks avec assignees = [identifiant], order_by = "updated", include_closed = false (page 0 seulement). Ne garde que les tâches dont date_updated (ms) >= ${since}.`,
       `Étape 3 : pour chacune de ces tâches (au plus 12, les plus récentes d'abord), appelle clickup_get_task_comments. Garde les commentaires dont date (ms) >= ${since} et dont l'auteur n'est pas l'utilisateur. Si un commentaire le mentionne et a reply_count > 0, tu peux appeler clickup_get_threaded_comments pour voir s'il a déjà répondu (alors : normal).`,
       `Éléments à renvoyer : chaque commentaire retenu (id = id du commentaire, from = son auteur, summary = ce qu'on attend de l'utilisateur), et chaque tâche mise à jour sans commentaire récent (id = "task-" + id de la tâche + "-" + date_updated, from = qui l'a vraisemblablement modifiée ou "ClickUp").`,
-      `Pour tous : title = "[custom_id] nom de la tâche" (sans crochets si pas de custom_id), context = nom de la liste, url = l'url de la tâche.`,
-    ].join('\n'),
+      `Pour tous : title = "[custom_id] nom de la tâche" (sans crochets si pas de custom_id), context = nom de la liste, status = le statut de la tâche, date = la date (ISO) du commentaire ou de la mise à jour, url = l'url de la tâche.`,
+      settle ? `handled = true si l'utilisateur a déjà répondu après ce commentaire, ou si la tâche est fermée.` : '',
+      settle && open.length
+        ? [
+            `Étape 4 : vérifie les cartes encore ouvertes (liste plus bas ; la tâche est celle de leur url, le statut noté est celui du moment de la carte), avec ce que tu as déjà lu :`,
+            `- carte "rem-…" : settled, how = "resolved" si son rappel n'est plus dans la liste de l'étape 1 ;`,
+            `- tâche présente à l'étape 2 avec date_updated antérieure à la carte : rien n'a bougé, elle reste ouverte (ne la relis pas) ;`,
+            `- tâche modifiée depuis la carte : lis ses commentaires (clickup_get_task_comments, si l'étape 3 ne l'a pas déjà fait) : how = "replied" si l'utilisateur a commenté après la date de la carte, how = "resolved" si le commentaire de la carte est résolu, how = "status" si son statut n'est plus celui noté sur la carte ;`,
+            `- tâche absente de l'étape 2 : appelle clickup_get_task (au plus 6) : how = "closed" si elle est fermée ou terminée, how = "reassigned" si l'utilisateur n'en est plus assigné ; sinon elle reste ouverte.`,
+          ].join('\n')
+        : '',
+    ]
+      .filter(Boolean)
+      .join('\n'),
   // A task and its comments are one conversation: one card per task.
   groupBy: (r) => (/^https:\/\/app\.clickup\.com\//.test(r.url || '') ? r.url.replace(/[?#].*$/, '') : ''),
   normalize: (r) => ({
     url: /^https:\/\/app\.clickup\.com\//.test(r.url || '') ? r.url : '',
+    status: String(r.status || '').slice(0, 40),
   }),
   // A comment, a status, a reassignment, or the ticket handled in a reference project.
   proposer: require('./propose'),
