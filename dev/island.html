@@ -100,7 +100,7 @@
           ],
           mood: { name: 'meeting-late', priority: 99 },
         },
-        mail: { status: 'ok', lastCheck: now - 3 * MIN, unread: 3, stats: { checked: 12, important: 3 }, items: [
+        mail: { status: 'ok', lastCheck: now - 3 * MIN, unread: 3, doneToday: 2, settledToday: 2, settleSource: 'Gmail', stats: { checked: 12, important: 3, settled: 2 }, items: [
           { id: 'm1', title: 'Point budget : dispo jeudi ?', from: 'Claire Martin <claire.martin@corp.fr>', verdict: 'important', reason: 'Question directe', summary: 'Confirmer sa présence jeudi 14 h', url: 'https://mail.google.com/x', at: now - 4 * MIN, read: false,
             proposal: { kind: 'reply', headline: 'Gany a rédigé une réponse', ask: 'Claire te demande si tu es disponible jeudi à 14 h pour le point budget.', analysis: 'Ton agenda est libre jeudi de 13 h 30 à 16 h.',
               read: { from: 'Claire Martin', date: 'lun. 10:42', text: 'Bonjour Camille,\nEs-tu disponible jeudi à 14h pour faire le point sur le budget 2027 ? Une heure devrait suffire.\nMerci,\nClaire' },
@@ -122,7 +122,7 @@
               actions: [{ act: 'comment', label: 'Répondre', primary: true, usesText: true }, { act: 'status', label: 'Passer en « in progress »' }, { act: 'handoff', label: 'Traiter dans HelpDesk' }] } },
           { id: 'c2', title: '[DATA-753] Adresse de facturation', from: 'Emma Roux', context: 'Réalisation', verdict: 'important', reason: 'Le métier demande', summary: 'Traiter avec Hugo Garnier', url: 'https://app.clickup.com/t/y', at: now - 50 * MIN, read: false },
         ] },
-        gchat: { status: 'ok', lastCheck: now - 2 * MIN, via: q0.get('via') === 'mails' ? 'Google refuse l’accès au connecteur Chat : Gany lit les mails de rappel de Chat (avec retard) et réessaie toutes les heures.' : null, unread: 2, stats: { checked: 23, important: 3 }, items: [
+        gchat: { status: 'ok', lastCheck: now - 2 * MIN, via: q0.get('via') === 'mails' ? 'Google refuse l’accès au connecteur Chat : Gany lit les mails de rappel de Chat (avec retard) et réessaie toutes les heures.' : null, unread: 2, doneToday: 1, settledToday: 1, settleSource: 'Google Chat', stats: { checked: 23, important: 3, settled: 1 }, items: [
           { id: 'spaces/D1/messages/m1', title: 'Tu peux valider le mapping des pays avant 14 h ?', from: 'Chloé Lambert', context: 'Message direct', verdict: 'urgent', reason: 'Validation attendue aujourd’hui', summary: 'Valider le mapping avant la recette', url: 'https://chat.google.com/dm/D1', at: now - 8 * MIN, read: false, messages: 3 },
           { id: 'spaces/S1/messages/m2', title: '@Camille on garde le nom de table actuel ou on renomme ?', from: 'Hugo Bernard', context: 'Projet Data', verdict: 'important', reason: '@mention avec une question', summary: 'Trancher le nom de la table', url: 'https://chat.google.com/room/S1/t1', at: now - 35 * MIN, read: false },
           { id: 'spaces/D2/messages/m3', title: 'Le point de demain est décalé à 10 h, ça te va ?', from: 'Inès Moreau', context: 'Message direct', verdict: 'important', reason: 'Attend une réponse', summary: 'Confirmer le nouvel horaire', url: 'https://chat.google.com/dm/D2', at: now - 70 * MIN, read: true },
