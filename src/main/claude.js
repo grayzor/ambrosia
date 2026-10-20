@@ -468,15 +468,25 @@ function conversation(o, onEvent) {
   };
 }
 
+/**
+ * The cmd.exe call behind openLoginTerminal. Verbatim arguments: otherwise Node
+ * escapes the quoted title C-style (\"), cmd.exe misreads it and `start` looks
+ * for a program named `Claude\`.
+ */
+function loginCommand(cli) {
+  return {
+    file: 'cmd.exe',
+    args: ['/c', 'start', '"Connexion Claude"', 'cmd', '/k', `"${cli}" auth login`],
+    options: { detached: true, windowsHide: false, shell: false, windowsVerbatimArguments: true },
+  };
+}
+
 /** Opens a terminal running `claude auth login` so the user can sign in once. */
 function openLoginTerminal() {
   const cli = locate();
   if (!cli) return false;
-  spawn('cmd.exe', ['/c', 'start', '"Connexion Claude"', 'cmd', '/k', `"${cli}" auth login`], {
-    detached: true,
-    windowsHide: false,
-    shell: false,
-  }).unref();
+  const { file, args, options } = loginCommand(cli);
+  spawn(file, args, options).unref();
   return true;
 }
 
@@ -517,4 +527,4 @@ function openSession({ cwd, prompt, title = 'Gany', planMode = true }) {
   return true;
 }
 
-module.exports = { locate, authStatus, listMcp, mcpPrefix, run, stream, conversation, openLoginTerminal, openSession, cmdQuotable };
+module.exports = { locate, authStatus, listMcp, mcpPrefix, run, stream, conversation, openLoginTerminal, loginCommand, openSession, cmdQuotable };
