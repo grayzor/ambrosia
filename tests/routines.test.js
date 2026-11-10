@@ -357,6 +357,14 @@ test('module: analyze → suggestion → edit, frequency, create (deep link), co
     openPath() {},
     onAction: (n, fn) => h.actions.set(n, fn),
   };
+  // The module reads the last 21 days from the real clock, not from NOW: its own
+  // session has to be recent today, or the test breaks three weeks after NOW.
+  const recent = path.join(tmp, 'home', '.claude', 'projects', 'C--Users-n-Documents-HelpDesk');
+  fs.mkdirSync(recent, { recursive: true });
+  fs.writeFileSync(
+    path.join(recent, 'today.jsonl'),
+    JSON.stringify({ type: 'user', timestamp: new Date(Date.now() - 2 * L.DAY).toISOString(), cwd: 'C:\\Users\\n\\Documents\\HelpDesk', message: { content: 'liste les tickets ouverts' } }),
+  );
   def.init.call(def, ctx);
   const act = (n, p) => h.actions.get(n)(p || {});
   try {

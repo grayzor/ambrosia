@@ -215,8 +215,43 @@ async function run(o) {
     res = await runOnce(o, warmups[i], i < warmups.length - 1);
     if (!res.mcpNotReady) return res;
     log(`${o.requireMcp} not ready after ${warmups[i] / 1000} s`);
+    // claude.ai connectors are simply not loaded for a signed-out CLI (expired
+    // OAuth session…): say so now instead of waiting on a connector that never comes.
+    if (res.connectorAbsent) {
+      const auth = await authStatus();
+      if (auth.loggedIn === false) {
+        log('CLI not signed in:', auth.error || auth.authMethod || '');
+        return signedOut(res);
+      }
+    }
   }
   return res;
+}
+
+const SIGNED_OUT = 'La CLI Claude n’est plus connectée (session expirée) : clique sur « Se connecter ».';
+
+function signedOut(res) {
+  return { ...res, ok: false, mcpNotReady: false, connectorAbsent: false, authError: true, error: SIGNED_OUT };
+}
+
+/**
+ * The verdict of a turn that needed `requireMcp`. A sign-in problem wins over
+ * "connector not ready": a signed-out CLI loads no claude.ai connector at all, and
+ * calling that "not ready" kept Ambrosia retrying instead of asking to sign in.
+ */
+function connectorOutcome(res, requireMcp) {
+  if (!requireMcp) return res;
+  if (res.authError) return signedOut(res);
+  const prefix = mcpPrefix(requireMcp);
+  const server = (res.mcpServers || []).find((m) => m.name === requireMcp);
+  if ((res.toolsUsed || []).some((t) => t.startsWith(prefix)) || server?.status === 'connected') return res;
+  return {
+    ...res,
+    ok: false,
+    mcpNotReady: true,
+    connectorAbsent: !server,
+    error: `Le connecteur « ${requireMcp} » n’est pas prêt (${server ? server.status : 'absent'}).`,
+  };
 }
 
 async function runOnce(o, warmupMs, abortIfPending = false) {
@@ -288,13 +323,7 @@ async function runOnce(o, warmupMs, abortIfPending = false) {
         res.toolsUsed = toolsUsed;
         res.toolCalls = toolCalls;
         res.mcpServers = mcpServers;
-        if (o.requireMcp) {
-          const prefix = mcpPrefix(o.requireMcp);
-          const server = mcpServers.find((m) => m.name === o.requireMcp);
-          if (!toolsUsed.some((t) => t.startsWith(prefix)) && server?.status !== 'connected') {
-            res = { ...res, ok: false, mcpNotReady: true, error: `Le connecteur « ${o.requireMcp} » n’est pas prêt (${server ? server.status : 'absent'}).` };
-          }
-        }
+        res = connectorOutcome(res, o.requireMcp);
         log(`run ${o.model || 'fast'} ${Date.now() - started}ms ok=${res.ok}${res.error ? ' err=' + res.error : ''}`);
         resolve(res);
       }
@@ -549,4 +578,4 @@ function openSession({ cwd, prompt, title = 'Gany', planMode = true }) {
   return true;
 }
 
-module.exports = { locate, authStatus, listMcp, mcpPrefix, run, stream, conversation, onRateLimits, openLoginTerminal, loginCommand, openSession, cmdQuotable };
+module.exports = { locate, authStatus, listMcp, mcpPrefix, connectorOutcome, run, stream, conversation, onRateLimits, openLoginTerminal, loginCommand, openSession, cmdQuotable };
