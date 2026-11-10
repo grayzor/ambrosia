@@ -186,6 +186,7 @@ module.exports = {
     });
 
     // A second reading by Claude: tables, handwriting, a photo at an angle.
+    ctx.onAction('login', () => ctx.claude.openLoginTerminal());
     ctx.onAction('claude', async ({ id } = {}) => {
       const it = find(id);
       if (!it || it.claude?.busy || !fs.existsSync(it.image)) return false;
@@ -200,7 +201,7 @@ module.exports = {
         addDirs: [path.dirname(it.image)],
         timeoutMs: 120000,
       });
-      it.claude = res.ok ? { text: String(res.text || '').trim() } : { error: res.authError ? 'La CLI Claude n’est pas connectée.' : res.error || 'échec' };
+      it.claude = res.ok ? { text: String(res.text || '').trim() } : { error: res.authError ? 'La CLI Claude n’est pas connectée.' : res.error || 'échec', auth: !!res.authError };
       if (it.claude.text && ctx.settings().autoCopy !== false) {
         clipboard.writeText(it.claude.text);
         it.copied = Date.now();

@@ -34,11 +34,18 @@
           { key: 'occasions', label: 'Fêtes et jours fériés', type: 'boolean', default: true },
         ],
       };
+      const claudeMod = { id: 'claude', name: 'Claude', icon: '✶', settings: [{ key: 'hooks', label: 'Hooks', type: 'hooks' }] };
+      const cliPath = 'C:\\Users\\camille\\.local\\bin\\claude.exe';
       const core = {
-        boot: () => ({ settings, modules: [gany] }),
+        boot: () => ({ settings, modules: [gany, claudeMod] }),
         setSettings: ({ section, patch }) => (settings[section] = { ...settings[section], ...patch }),
         logPath: () => '',
         displays: () => [],
+        // ?cli=ok : CLI connectée ; sinon déconnectée (session expirée).
+        claudeStatus: () => (new URLSearchParams(location.search).get('cli') === 'ok'
+          ? { loggedIn: true, authMethod: 'claude.ai', path: cliPath }
+          : { loggedIn: false, authMethod: 'none', path: cliPath }),
+        hooksStatus: () => ({ installed: true, missing: [] }),
       };
       window.ambrosia = {
         on: () => () => {},

@@ -199,7 +199,8 @@ function field(section, f) {
       );
     }
     case 'hooks':
-      return hooksPanel();
+      // The hooks' green dot reads like "connected": show the CLI sign-in right above it.
+      return h('div', cliPanel(), hooksPanel());
     case 'wardrobe':
       return wardrobePanel(section, f, flag);
     case 'display': {
@@ -462,7 +463,7 @@ function cliPanel() {
   const refresh = async () => {
     const st = await api.core('claudeStatus');
     mount(box,
-      h('label.l', 'État'),
+      h('label.l', 'Connexion de la CLI Claude'),
       h('div.status', h('span.state-dot', { style: { '--c': st.loggedIn ? 'var(--ok)' : 'var(--bad)' } }),
         !st.path ? 'CLI Claude introuvable' : st.loggedIn ? `Connectée (${st.authMethod || 'abonnement'})${st.email ? ' · ' + st.email : ''}` : 'Non connectée'),
       st.path ? h('div.help.mono', st.path) : null,

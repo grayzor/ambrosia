@@ -71,7 +71,10 @@ function card(it, ui) {
     it.empty ? h('div.small.dim', { style: { marginTop: '6px' } }, 'Aucun texte trouvé. Claude saura peut-être lire mieux (écriture manuscrite, photo de biais).') : null,
     it.text ? h('pre.ocr-text', it.text) : null,
     it.claude?.busy ? h('div.small.dim.ocr-wait', 'Claude relit l’image…') : null,
-    it.claude?.error ? h('div.small', { style: { color: '#FF9AA3', marginTop: '6px' } }, `Claude : ${it.claude.error}`) : null,
+    it.claude?.error
+      ? h('div.small', { style: { color: '#FF9AA3', marginTop: '6px' } }, `Claude : ${it.claude.error}`,
+          it.claude.auth ? h('button.btn.sm', { style: { marginLeft: '8px' }, onclick: () => ui.action('login') }, 'Se connecter') : null)
+      : null,
     it.claude?.text
       ? [
           h('div.faint.small', { style: { marginTop: '8px' } }, 'Lecture de Claude'),
