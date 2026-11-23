@@ -1,8 +1,11 @@
-// Island panel for Agenda: today's real meetings, and whether you are in them;
-// the webcam mirror, the « late » mail, invitations to answer, and the actions
+// Island panel for Agenda: a month on the left (calendar.js), the day picked on
+// the right — today's real meetings, and whether you are in them; the webcam mirror, the « late » mail, invitations to answer, and the actions
 // Gemini's notes left for the user after a meeting.
 
 import { startMirror, stopMirror, mirrorBlock, mirrorId } from './mirror.js';
+import './calendar.js'; // plain script: globalThis.AmbrosiaCalendar (also required by main.js)
+
+const Cal = globalThis.AmbrosiaCalendar;
 
 const hhmm = (ms) => new Date(ms).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
 
@@ -27,6 +30,10 @@ const inviteErrs = new Map();
 // After-meeting actions: errors of the last click, the ClickUp list picker.
 const taskErrs = new Map();
 let picker = null; // { loading, lists, error }
+// The calendar: the day picked (null = today), the month shown (null = the picked day's), the last alert focus seen.
+let picked = null;
+let shownMonth = null;
+let lastFocusAt = 0;
 
 const PHASE = {
   soon: { label: 'Bientôt', cls: 'gold' },
@@ -103,6 +110,26 @@ function render(root, st, ui) {
       root.append(h('div.card', h('div.small', { style: { color: '#FF9AA3' } }, 'Dernière lecture ratée : ', st.error)));
     }
 
+    // Two columns: the month on the left, the day picked on the right. An alert that
+    // brings something of today into view (brief, mirror, late, notes) brings today back.
+    const today = Cal.dayKey(Date.now());
+    for (const f of [st.focusMirror, st.focusLate, st.focusNotes, st.focusBrief]) {
+      if (f?.at > lastFocusAt) {
+        lastFocusAt = f.at;
+        if (Date.now() - f.at < 20000) picked = shownMonth = null;
+      }
+    }
+    if (picked && picked < today) picked = null;
+    let target = root;
+    if (st.calendar) {
+      const day = picked || today;
+      const right = h('div.ag-day');
+      root.append(h('div.ag-split', calendarBlock(st, ui, day, today), right));
+      target = right;
+      right.append(dayHead(st, ui, day, today));
+      if (day !== today) return otherDay(right, st, ui, day);
+    }
+
     // From an alert: « Me voir » lights the camera (that click), « Prévenir du retard »
     // opens the form, « Voir » brings the after-meeting actions into view. Once each,
     // and only right after the click (not when the island reloads later).
@@ -117,11 +144,11 @@ function render(root, st, ui) {
       if (!m || m.joined || m.acked || m.phase === 'over' || st.mirror === false) stopMirror();
     }
 
-    for (const block of [invitesBlock(st, ui), notesBlock(st, ui)]) if (block) root.append(block);
+    for (const block of [invitesBlock(st, ui), notesBlock(st, ui)]) if (block) target.append(block);
     if (notesFocus) requestAnimationFrame(() => root.querySelector(`[data-notes="${CSS.escape(notesFocus)}"]`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }));
 
     if (!list.length) {
-      root.append(h('div.empty', st.fetchedAt ? 'Plus aucune réunion aujourd’hui. Gany veille quand même.' : ''));
+      target.append(h('div.empty', st.fetchedAt ? 'Plus aucune réunion aujourd’hui. Gany veille quand même.' : ''));
       return;
     }
 
@@ -179,11 +206,109 @@ function render(root, st, ui) {
         ),
       );
     }
-    root.append(cards);
+    target.append(cards);
     if (scrollTo) {
       requestAnimationFrame(() => root.querySelector(`[data-id="${CSS.escape(scrollTo)}"]`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }));
     }
   }
+}
+
+// ── The calendar (left) and the day picked (right) ─────────────────────
+
+const WEEK_HEAD = ['L', 'M', 'M', 'J', 'V', 'S', 'D'];
+
+/** The month grid: a dot per event (gold: an invitation to answer), today ringed, the day picked filled. */
+function calendarBlock(st, ui, day, today) {
+  const { h } = ui;
+  const cal = st.calendar;
+  const months = Cal.monthsOf(cal.from, cal.to);
+  const [py, pm] = day.split('-').map(Number);
+  let i = shownMonth == null ? months.findIndex((m) => m.year === py && m.month === pm - 1) : shownMonth;
+  if (i < 0 || i >= months.length) i = 0;
+  const { year, month } = months[i];
+  const go = (d) => {
+    shownMonth = i + d;
+    ui.rerender();
+  };
+  const cell = (c) => {
+    const events = cal.days?.[c.key] || [];
+    const past = c.key < today;
+    const far = c.key > cal.to;
+    const pick = !past && !far;
+    return h(
+      'button.cal-day' + (c.inMonth ? '' : '.out') + (past ? '.past' : '') + (far ? '.far' : '') + (c.key === today ? '.today' : '') + (c.key === day ? '.sel' : ''),
+      {
+        disabled: !pick,
+        title: far ? 'Gany ne lit que les 14 prochains jours' : events.length ? events.map((e) => (e.allDay ? 'journée' : hhmm(e.start)) + ' ' + e.title).join('\n') : '',
+        onclick: () => {
+          ui.sound.play('tick');
+          picked = c.key === today ? null : c.key;
+          shownMonth = null;
+          ui.rerender();
+        },
+      },
+      h('span.cal-n', String(c.day)),
+      h('span.cal-dots', events.slice(0, 3).map((e) => h('i' + (e.invite ? '.inv' : ''))), events.length > 3 ? h('i.more') : null),
+    );
+  };
+  return h('div.ag-cal',
+    h('div.row.cal-head',
+      h('span.title.grow', `${Cal.MONTHS[month][0].toUpperCase()}${Cal.MONTHS[month].slice(1)} ${year}`),
+      h('button.cal-nav', { disabled: i === 0, title: 'Mois précédent', onclick: () => go(-1) }, '‹'),
+      h('button.cal-nav', { disabled: i >= months.length - 1, title: 'Mois suivant', onclick: () => go(1) }, '›'),
+    ),
+    h('div.cal-grid',
+      WEEK_HEAD.map((d) => h('span.cal-wd', d)),
+      Cal.monthGrid(year, month).flat().map(cell),
+    ),
+    h('div.cal-foot.faint.small',
+      cal.readAt ? `14 jours lus ${ui.ago(cal.readAt)}` : '14 prochains jours : à la prochaine lecture',
+    ),
+  );
+}
+
+/** « AUJOURD'HUI · Lundi 23 novembre · 4 réunions » above the day's column. */
+function dayHead(st, ui, day, today) {
+  const { h } = ui;
+  const n = day === today ? (st.meetings || []).length : (st.calendar.days?.[day] || []).length;
+  const what = day === today ? (n > 1 ? `${n} réunions à venir` : n ? '1 réunion à venir' : 'rien à venir') : n > 1 ? `${n} événements` : n ? '1 événement' : 'rien de prévu';
+  return h('div.ag-day-head.row',
+    h('div.grow',
+      h('div.ag-day-name', day === today ? 'Aujourd’hui' : Cal.dayLabel(day)),
+      h('div.faint.small', day === today ? `${Cal.dayLabel(day)} · ${what}` : what),
+    ),
+    day !== today ? h('button.btn.sm.ghost', { onclick: () => { picked = shownMonth = null; ui.rerender(); } }, 'Aujourd’hui') : null,
+  );
+}
+
+/** Another day: its events (from the look-ahead) and the invitations of that day, to answer here. */
+function otherDay(root, st, ui, day) {
+  const { h } = ui;
+  const events = st.calendar.days?.[day] || [];
+  if (!events.length) root.append(h('div.empty', 'Rien de prévu ce jour-là.'));
+  else {
+    root.append(
+      h('div.ag-events',
+        events.map((e) =>
+          h('div.ag-ev' + (e.invite ? '.inv' : '') + (e.tentative ? '.maybe' : '') + (e.focus ? '.focus' : ''),
+            h('div.ag-ev-time', e.allDay ? h('span.small.dim', 'journée') : [h('span.mono', hhmm(e.start)), e.end ? h('span.faint.small', hhmm(e.end)) : null]),
+            h('i.ag-ev-bar'),
+            h('div.grow',
+              h('div.title.ellipsis', { title: e.title }, e.title),
+              h('div.small.faint',
+                e.invite ? h('span.pill.gold', 'à répondre') : null,
+                e.tentative ? h('span.pill', 'peut-être') : null,
+                e.invite || e.tentative ? ' ' : null,
+                e.meet ? 'Meet' : e.allDay ? '' : 'sans Meet',
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+  const invites = (st.invitations || []).filter((inv) => Cal.dayKey(inv.startMs || inv.start) === day);
+  if (invites.length) root.append(h('div.card', { style: { marginTop: '8px' } }, h('div.title', invites.length > 1 ? 'Invitations de ce jour' : 'Invitation de ce jour'), invites.map((inv) => inviteRow(inv, ui))));
 }
 
 /** « Préparer » before there is a brief, « Brief » to unfold it, a busy label while Gany reads. */

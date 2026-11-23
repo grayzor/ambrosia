@@ -28,6 +28,7 @@ const { currentCall } = require('./call');
 const L = require('./late');
 const I = require('./invites');
 const N = require('./notes');
+const C = require('./calendar');
 
 const SCHEMA = {
   type: 'object',
@@ -74,7 +75,7 @@ const SCHEMA = {
 };
 
 // Once an hour, the same read looks 14 days ahead: the invitations to answer, and
-// the user's events of those days (to show clashes).
+// the user's events of those days (clashes, and the calendar of the tab: calendar.js).
 const INVITES_SCHEMA = {
   type: 'object',
   properties: {
@@ -84,7 +85,7 @@ const INVITES_SCHEMA = {
       type: 'array',
       items: {
         type: 'object',
-        properties: { id: { type: 'string' }, title: { type: 'string' }, start: { type: 'string' }, end: { type: 'string' }, selfResponse: { type: 'string' }, recurringEventId: { type: 'string' }, eventType: { type: 'string' } },
+        properties: { id: { type: 'string' }, title: { type: 'string' }, start: { type: 'string' }, end: { type: 'string' }, selfResponse: { type: 'string' }, recurringEventId: { type: 'string' }, eventType: { type: 'string' }, meetUrl: { type: 'string' } },
         required: ['id', 'start', 'end', 'selfResponse'],
       },
     },
@@ -121,6 +122,7 @@ module.exports = {
     { key: 'lateMinutes', label: 'Prévenir du retard : délai proposé (minutes)', type: 'number', default: 5 },
     { key: 'lateSignature', label: 'Prévenir du retard : signature (vide = ton prénom)', type: 'text', default: '' },
     { key: 'invitations', label: 'Invitations en attente : les afficher (14 jours) et y répondre depuis l’îlot', type: 'boolean', default: true, help: 'Courrier laisse alors à l’Agenda les mails d’invitation (pièce jointe invite.ics).' },
+    { key: 'calendar', label: 'Calendrier des 14 prochains jours dans l’onglet (à gauche le mois, à droite le jour choisi)', type: 'boolean', default: true, help: 'La lecture horaire des 14 prochains jours (celle des invitations) rapporte aussi tes autres événements : aucune lecture en plus quand les invitations sont affichées.' },
     { key: 'invitesAlert', label: 'Prévenir à chaque nouvelle invitation', type: 'boolean', default: true },
     { key: 'notesAuto', label: 'Après une réunion Meet : chercher les notes de Gemini et tes actions', type: 'boolean', default: true, help: 'Si « Prendre des notes pour moi » était activé, Gany lit le document joint à l’événement (lecture seule) 10 min à 2 h après la fin.' },
     { key: 'notesModel', label: 'Modèle de lecture des notes', type: 'select', default: 'sonnet', options: ['sonnet', 'haiku'] },
@@ -149,6 +151,8 @@ module.exports = {
     data.notes ||= {};
     data.lateSent ||= {};
     let fetching = false;
+    // The 14-day look-ahead failed (too long, cut off…): today's read goes on without it for an hour.
+    let aheadFailedAt = 0;
     let status = data.fetchedAt ? 'ok' : 'idle';
     let error = null;
     let sample = null; // last presence sample
@@ -254,7 +258,7 @@ module.exports = {
       const from = new Date(Date.now() - 3 * 3600000).toISOString();
       const to = new Date(Date.now() + 20 * 3600000).toISOString();
       // The 14-day look-ahead for invitations rides along once an hour (one turn, two reads).
-      const ahead = s().invitations !== false && Date.now() - (data.invitesAt || 0) > 60 * MIN;
+      const ahead = (s().invitations !== false || s().calendar !== false) && Date.now() - (data.invitesAt || 0) > 60 * MIN && Date.now() - aheadFailedAt > 60 * MIN;
       const far = new Date(Date.now() + 14 * 24 * 3600000).toISOString();
       const res = await ctx.claude.run({
         prompt: [
@@ -262,8 +266,8 @@ module.exports = {
           `Puis renvoie le JSON : selfEmail = l'email de l'entrée attendees self=true (ou du créateur self=true), et un objet par événement, recopié tel quel.`,
           ...(ahead
             ? [
-                `Ensuite appelle list_events avec startTime = "${to}", endTime = "${far}", orderBy = "startTime", pageSize = 150.`,
-                `De cette 2e lecture, mets dans invitations UNIQUEMENT les événements où l'entrée attendees self=true a responseStatus = "needsAction" (mêmes champs que events) ; et dans busy, pour les seuls jours où il y a une invitation, les autres événements non refusés (id, title, start, end, selfResponse, recurringEventId, eventType). Rien d'autre de cette 2e lecture.`,
+                `Ensuite appelle list_events avec startTime = "${to}", endTime = "${far}", orderBy = "startTime", pageSize = 250.`,
+                `De cette 2e lecture, mets dans invitations UNIQUEMENT les événements où l'entrée attendees self=true a responseStatus = "needsAction" (mêmes champs que events) ; et dans busy, TOUS les autres événements non refusés de cette 2e lecture (id, title, start, end, selfResponse, recurringEventId, eventType, meetUrl = hangoutLink ou lien Meet, sinon ""). Rien d'autre de cette 2e lecture.`,
               ]
             : []),
         ].join('\n'),
@@ -275,6 +279,12 @@ module.exports = {
         timeoutMs: 240000,
       });
       fetching = false;
+      // Today's meetings never wait for the look-ahead: it failed, read today alone now.
+      if (!res.ok && ahead && !res.authError && !res.mcpNotReady) {
+        aheadFailedAt = Date.now();
+        ctx.log('look-ahead failed, today alone:', res.error);
+        return refresh();
+      }
       if (!res.ok) {
         status = res.authError ? 'auth' : res.mcpNotReady ? 'no-connector' : 'error';
         error = res.error;
@@ -849,6 +859,8 @@ module.exports = {
         mirror: s().mirror !== false,
         lateChips: L.CHIPS,
         invitations: invitationsView(),
+        // The tab's calendar: today from the agenda read, 14 days from the hourly look-ahead.
+        calendar: s().calendar !== false ? { ...C.buildDays({ events: data.events, busy: data.busy, invitations: s().invitations === false ? [] : data.invitations }, now, { ignore: s().ignoreTags }), readAt: data.invitesAt || 0 } : null,
         notes: notesView(),
         clickupList: N.parseListId(s().clickupList) ? { id: N.parseListId(s().clickupList), name: s().clickupListName || '' } : null,
         mood: alarm ? { name: `meeting-${alarm.phase}`, priority: alarm.phase === 'late' ? 99 : alarm.phase === 'now' ? 97 : 85 } : null,

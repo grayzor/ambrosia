@@ -291,3 +291,17 @@ test('cards: the space’s resource name is never shown as its name', () => {
   assert.equal(n({ kind: 'space', context: 'Infra HELPDESK' }).context, 'Infra HELPDESK');
   assert.equal(n({ kind: 'dm', context: '' }).context, 'Message direct');
 });
+
+test('a question someone else already answered: the prompt says so, the open card closes as « others »', async () => {
+  const S = 'spaces/S';
+  const open = { id: `${S}/messages/1`, group: `${S}/threads/t`, from: 'Lucas Martin <lucas@example.com>', title: 'Code du TPE-40 ?', verdict: 'important', at: Date.now() - 600000, read: false };
+  const t = harness([{ found: 1, items: [], settled: [{ id: open.id, how: 'others' }] }], {}, { items: [open], lastCheck: Date.now() - 300000 });
+  await t.act('refresh');
+  const prompt = t.runs[0].prompt;
+  assert.match(prompt, /Déjà réglé par quelqu'un d'autre/);
+  assert.match(prompt, /how = "others"/);
+  assert.match(prompt, /list_messages/);
+  assert.deepEqual(t.runs[0].jsonSchema.properties.settled.items.properties.how.enum, ['read', 'replied', 'others']);
+  assert.equal(t.state().items.length, 0);
+  assert.equal(t.data.items[0].doneHow, 'others');
+});

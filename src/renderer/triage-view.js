@@ -57,8 +57,16 @@ function proposalBox(m, ui, L) {
       h('button.btn.sm.ghost.icon', { title: 'Pas utile : Gany apprendra', onclick: () => { ui.flash('annoyed', 700); drafts.delete(key); ui.action('dismissProposal', { id: key }); } }, '×'),
     ),
     p.ask ? h('div.small', p.ask) : null,
-    p.analysis ? h('div.small.dim', p.analysis) : null,
+    p.analysis ? h('div.small.dim.prop-analysis', p.analysis) : null,
+    p.missing ? h('div.small.faint', 'Il manque : ', p.missing) : null,
+    p.next ? h('div.small', h('span.prop-next', 'Prochaine étape · '), p.next) : null,
     p.plan ? h('div.small.dim', '→ ', p.plan) : null,
+    p.sources?.length
+      ? h('div.small.faint.prop-sources', 'Sources : ', p.sources.map((src, i) => [
+          i ? ' · ' : '',
+          src.url ? h('a.prop-link', { title: src.url, onclick: (e) => { e.stopPropagation(); ui.core('openExternal', src.url); } }, src.title) : src.title,
+        ]))
+      : null,
     p.read
       ? reading.has(key)
         ? h('div.prop-read',
@@ -76,7 +84,7 @@ function proposalBox(m, ui, L) {
           onclick: (e) => e.stopPropagation(),
         }, value)
       : null,
-    h('div.btns', { style: { marginTop: '6px' } }, p.actions.map(button)),
+    p.actions.length ? h('div.btns', { style: { marginTop: '6px' } }, p.actions.map(button)) : null,
     failed && !busy ? h('div.small', { style: { color: '#FF9AA3', marginTop: '4px' } }, 'Raté : ', failed[1].error) : null,
   );
 }

@@ -185,3 +185,29 @@ test('agenda: a Meet joined → notes looked for after the end → actions → o
   await actions.get('openNotes')({ id: 'tenue' });
   assert.deepEqual(opened, [doc.url]);
 });
+
+test('agenda: a failed 14-day look-ahead never holds today back; the calendar fills from it', async (t) => {
+  const iso = (m) => new Date(Date.now() + m * MIN).toISOString();
+  const today = { id: 't', title: 'Revue', start: iso(60), end: iso(90), attendees: 4, selfResponse: 'accepted', meetUrl: 'https://meet.google.com/a' };
+  const busy = { id: 'b', title: 'Daily', start: iso(2 * 24 * 60), end: iso(2 * 24 * 60 + 30), selfResponse: 'accepted' };
+  let fail = true;
+  const a = await agenda((o) => {
+    if (o.jsonSchema?.properties?.busy && fail) return { ok: false, error: 'Réponse coupée' };
+    return { ok: true, structured: { selfEmail: 'moi@x.fr', events: [today], invitations: [], busy: [busy] } };
+  });
+  t.after(a.stop);
+  await a.actions.get('refresh')();
+  // Two turns: the big one failed, then today alone.
+  assert.equal(a.runs.length, 2);
+  assert.ok(a.runs[0].jsonSchema.properties.busy);
+  assert.ok(!a.runs[1].jsonSchema.properties.busy);
+  assert.deepEqual(a.state().meetings.map((m) => m.id), ['t']);
+  assert.equal(a.state().status, 'ok');
+  // The next refresh does not retry the look-ahead within the hour.
+  fail = false;
+  await a.actions.get('refresh')();
+  assert.ok(!a.runs[2].jsonSchema.properties.busy);
+  // The calendar shows today from the agenda read.
+  const day = require('../src/modules/agenda/calendar').dayKey(today.start);
+  assert.deepEqual(a.state().calendar.days[day].map((e) => e.id), ['t']);
+});

@@ -4,14 +4,18 @@
 // user would do: a comment, a status change, a reassignment, or "Traiter dans
 // <projet>", which opens a Claude Code session there, in plan mode.
 //
+// Proactive: when the ticket can be analysed on its own, Gany does the analysis pass
+// himself (Sonnet by default): he looks the information up in the other read-only
+// sources (Gmail, Drive, linked tickets — src/main/lookup.js) and keeps his analysis
+// on the card even when there is nothing to click.
+//
 // The analysis turn is read-only: ClickUp read tools + Read/Grep/Glob on those
 // folders, secrets denied. Ticket content is untrusted, so commands (Bash, the
 // BigQuery scripts…) only ever run in the interactive session, under the user's eyes.
 
-const fs = require('fs');
-const os = require('os');
 const path = require('path');
 const { callTool } = require('../../main/triage');
+const L = require('../../main/lookup');
 
 const READ_TOOLS = [
   'clickup_get_task',
@@ -25,11 +29,11 @@ const READ_TOOLS = [
 const SCHEMA = {
   type: 'object',
   properties: {
-    kind: { type: 'string', enum: ['proposal', 'none'] },
+    kind: { type: 'string', enum: ['proposal', 'analysis', 'none'], description: 'proposal = une action à proposer ; analysis = seulement ton analyse (rien à publier) ; none = rien d’utile' },
     confidence: { type: 'string', enum: ['high', 'medium', 'low'] },
     task_id: { type: 'string', description: 'L’id ClickUp de la tâche (renvoyé par clickup_get_task)' },
     ask: { type: 'string', description: 'Ce qu’on attend de l’utilisateur, une phrase, en français' },
-    analysis: { type: 'string', description: 'Ce que tu as compris et trouvé (ticket, mémoire, code), 3 phrases max' },
+    ...L.ANALYSIS_FIELDS,
     last_comment: { type: 'string', description: 'Le commentaire qui le sollicite, texte brut, 1500 caractères max' },
     last_comment_from: { type: 'string' },
     comment: { type: 'string', description: 'Commentaire prêt à publier (Markdown ClickUp, mentions [@Nom](#user_mention#id)), sinon vide' },
@@ -56,54 +60,8 @@ Rien ne sera fait sans son clic : propose seulement ce qui est utile. Réponds u
 
 const clip = (s, n) => String(s || '').trim().slice(0, n);
 
-/** Claude Code keeps a project's memory in ~/.claude/projects/<path with - >/memory. */
-function memoryDir(project) {
-  return path.join(os.homedir(), '.claude', 'projects', path.resolve(project).replace(/[^a-zA-Z0-9]/g, '-'), 'memory');
-}
-
-/** A Read deny rule for an absolute folder: C:\x\y → Read(//c/x/y/<glob>). */
-function denyRule(dir, glob) {
-  const posix = path.resolve(dir).replace(/\\/g, '/').replace(/^([a-zA-Z]):/, (_, d) => '/' + d.toLowerCase());
-  return `Read(/${posix}/${glob})`;
-}
-// Secrets never reach the analysis: env files, keys, local settings, and GCP
-// service-account keys (<project>-<12 hex>.json).
-const SECRETS = ['**/.env*', '**/*.pem', '**/*.key', '**/*.pfx', '**/*.p12', '**/settings.local.json', '**/*credentials*.json', `**/*-${'[0-9a-f]'.repeat(12)}.json`, '**/.git/**'];
-/** A draft that looks like it carries a secret is dropped, whatever the reason. */
-const SECRET_LIKE = /BEGIN [A-Z ]*PRIVATE KEY|"private_key"|\b(pass(word)?|pwd|secret|token|api[_-]?key)\s*[:=]\s*\S{6,}|AIza[0-9A-Za-z_-]{30}|\bsk-[A-Za-z0-9_-]{20,}|\w+:\/\/[^\s:@/]+:[^\s@/]+@/i;
-
-function projects(settings) {
-  return (settings.projects || []).map((p) => String(p).trim()).filter((p) => p && fs.existsSync(p));
-}
-
-function readClip(file, max) {
-  try {
-    return fs.readFileSync(file, 'utf8').slice(0, max);
-  } catch {
-    return '';
-  }
-}
-
-/** CLAUDE.md, the memory index and the skill names of each reference project. */
-function knowledge(dirs) {
-  const out = [];
-  for (const dir of dirs) {
-    const mem = memoryDir(dir);
-    let skills = [];
-    try {
-      skills = fs.readdirSync(path.join(dir, '.claude', 'skills'));
-    } catch {
-      /* none */
-    }
-    out.push(
-      `## Projet de référence : ${dir}`,
-      readClip(path.join(dir, 'CLAUDE.md'), 12000) || '(pas de CLAUDE.md)',
-      fs.existsSync(mem) ? `\n### Sa mémoire Claude Code (${mem}) — index, lis les fichiers utiles avec Read\n${readClip(path.join(mem, 'MEMORY.md'), 14000)}` : '',
-      skills.length ? `\n### Ses skills (${path.join(dir, '.claude', 'skills')}\\<nom>\\SKILL.md) : ${skills.join(', ')}` : '',
-    );
-  }
-  return out.filter(Boolean).join('\n');
-}
+const { memoryDir, denyRule, SECRET_LIKE, knowledge } = L;
+const projects = (settings) => L.projects(settings.projects);
 
 /** "https://app.clickup.com/t/86c5x" or ".../t/9015/DATA-12" → the last segment. */
 function taskIdOf(url) {
@@ -111,7 +69,7 @@ function taskIdOf(url) {
   return m ? m[1] : '';
 }
 
-function prompt(item, s, data, dirs, rejected) {
+function prompt(item, s, data, dirs, rejected, servers = {}) {
   const taskId = taskIdOf(item.url);
   const commentId = /^\d+$/.test(item.id) ? item.id : '';
   return [
@@ -122,14 +80,16 @@ function prompt(item, s, data, dirs, rejected) {
     '',
     `Étape 1 : clickup_get_task avec task_id = ${JSON.stringify(taskId)}, include = ["description"], expand_statuses = true. Puis clickup_get_task_comments (et clickup_get_threaded_comments si le commentaire qui le sollicite a des réponses : s'il y a déjà répondu, kind = "none").`,
     dirs.length
-      ? `Étape 2 : cherche ce que le projet sait déjà de ce sujet : lis les fichiers mémoire pertinents (Read), et au besoin cherche dans le code (Grep, Glob). Une dizaine de lectures au plus.`
-      : `Aucun projet de référence n'est configuré : appuie-toi seulement sur le ticket.`,
-    `Étape 3 : propose, seulement si c'est utile et juste :`,
+      ? `Étape 2 : cherche ce que le projet sait déjà de ce sujet : lis les fichiers mémoire pertinents (Read), et au besoin cherche dans le code (Grep, Glob).`
+      : `Aucun projet de référence n'est configuré.`,
+    `Étape 2 bis : si le ticket peut s'analyser en autonomie (une question, un incident, une demande d'information, un statut à établir), fais toi-même cette passe d'analyse : tickets liés (clickup_search), échanges et documents. ${L.LOOKUP_RULES}`,
+    L.sourcesBlock(servers, dirs),
+    `Étape 3 : rends ton analyse (analysis, sources, next, missing), et propose, seulement si c'est utile et juste :`,
     `- comment : la réponse à la question posée, un diagnostic étayé, ou la question précise qui débloque. Avec reply_to_id = l'id du commentaire si c'est une réponse en fil.`,
     `- status : un statut de available_statuses si l'évolution est évidente (ex. la demande est traitée, ou en attente d'un retour).`,
     `- assignees : si la demande revient clairement à quelqu'un d'autre (ids numériques vérifiés avec clickup_find_member_by_name ou la mémoire).`,
     dirs.length ? `- project_plan + project : si le ticket se traite dans un projet de référence (enquête BigQuery, correction, script…), ce que Claude Code y ferait.` : '',
-    `kind = "none" si tu n'as rien d'utile à proposer ; confidence = "low" si tu n'es pas sûr.`,
+    `kind = "proposal" s'il y a une action ci-dessus ; "analysis" si ton analyse aide l'utilisateur sans action à cliquer (diagnostic, état des lieux, réponse trouvée à vérifier) ; "none" si tu n'as rien appris d'utile ; confidence = "low" si tu n'es pas sûr.`,
     '',
     knowledge(dirs),
     rejected.length ? `\n## Propositions jugées inutiles par l'utilisateur (ne refais pas ce genre-là)\n${rejected.map((r) => `- "${r.title}" : ${r.what}`).join('\n')}` : '',
@@ -140,7 +100,8 @@ function prompt(item, s, data, dirs, rejected) {
 
 /** The model's answer → a proposal the island can show, or null. Exported for tests. */
 function build(out, item, dirs) {
-  if (!out || out.kind !== 'proposal' || out.confidence === 'low') return null;
+  if (!out || !['proposal', 'analysis'].includes(out.kind) || out.confidence === 'low') return null;
+  const found = L.cleanAnalysis(out);
   const taskId = /^[A-Za-z0-9_-]{1,40}$/.test(out.task_id || '') ? out.task_id : taskIdOf(item.url);
   if (!taskId) return null;
   const data = { taskId, url: item.url };
@@ -167,13 +128,13 @@ function build(out, item, dirs) {
     data.plan = plan;
     actions.push({ act: 'handoff', label: `Traiter dans ${path.basename(project)}`, primary: !comment, title: plan });
   }
-  if (!actions.length) return null;
-  const headline = comment ? 'Gany a préparé une réponse' : plan ? `Gany peut le traiter dans ${path.basename(project)}` : 'Gany propose une action';
+  if (!actions.length && !found.analysis) return null;
+  const headline = comment ? 'Gany a préparé une réponse' : plan ? `Gany peut le traiter dans ${path.basename(project)}` : actions.length ? 'Gany propose une action' : 'Gany a analysé le ticket';
   return {
     kind: 'clickup',
     headline,
     ask: clip(out.ask || item.summary, 300),
-    analysis: clip(out.analysis, 600),
+    ...found,
     plan: data.plan ? `Dans ${path.basename(project)} : ${data.plan}` : '',
     read: out.last_comment ? { from: clip(out.last_comment_from || item.from, 120), date: '', text: clip(out.last_comment, 1500) } : null,
     text: comment ? { label: 'Commentaire proposé', value: comment } : null,
@@ -197,7 +158,7 @@ function handoffPrompt(item, p) {
 module.exports = {
   max: 2, // the ClickUp quota is shared with the user's own sessions: stay frugal
   budgetMs: 120000,
-  label: 'Proposer une réponse, une action ou un traitement quand Gany peut le préparer',
+  label: 'Analyser les tickets en autonomie et proposer une réponse, une action ou un traitement',
   settings: [
     {
       key: 'projects',
@@ -217,15 +178,14 @@ module.exports = {
 
   async make({ item, ctx, settings, data, server, prefix, model, rejected }) {
     const dirs = projects(settings);
-    const addDirs = [...dirs, ...dirs.map(memoryDir).filter((d) => fs.existsSync(d))];
+    // The other connectors, read only (ClickUp itself: the tools below).
+    const { clickup, ...others } = await L.connectors(ctx, data);
     const res = await ctx.claude.run({
-      prompt: prompt(item, settings, data, dirs, rejected),
+      prompt: prompt(item, settings, data, dirs, rejected, { clickup: server, ...others }),
       systemPrompt: SYSTEM,
       model,
-      tools: addDirs.length ? ['Read', 'Grep', 'Glob'] : undefined,
-      addDirs,
-      allowedTools: READ_TOOLS.map((t) => prefix + t),
-      disallowedTools: addDirs.flatMap((d) => SECRETS.map((g) => denyRule(d, g))),
+      ...L.projectRun(dirs),
+      allowedTools: [...new Set([...READ_TOOLS.map((t) => prefix + t), prefix + 'clickup_search', ...L.toolsFor(ctx, others)])],
       jsonSchema: SCHEMA,
       requireMcp: server,
       timeoutMs: 360000,
@@ -237,7 +197,7 @@ module.exports = {
     return build(res.structured, item, dirs);
   },
 
-  alert: (item) => ({ actions: [{ label: 'Voir la proposition', action: 'show', payload: { id: item.id }, primary: true }] }),
+  alert: (item) => ({ actions: [{ label: item.proposal?.actions?.length ? 'Voir la proposition' : 'Voir l’analyse', action: 'show', payload: { id: item.id }, primary: true }] }),
 
   async apply({ act, item, proposal, text, ctx, server }) {
     const d = proposal.data;

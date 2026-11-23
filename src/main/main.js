@@ -18,6 +18,7 @@ const foreground = require('./foreground');
 const sys = require('./system');
 const updater = require('./updater');
 const Clip = require('./clip');
+const { Glow } = require('./glow');
 
 const DEV = process.argv.includes('--dev');
 const WIN_W = 760;
@@ -70,7 +71,25 @@ function placeIsland() {
     width: WIN_W,
     height: WIN_H,
   });
+  glow.replace();
 }
+
+// The glow along the top of the screen (src/main/glow.js): the island says when
+// (src/renderer/glow-rules.js), this window lights the top edge of its display.
+const glow = new Glow({
+  place: () => {
+    const { bounds } = targetDisplay();
+    const b = island && !island.isDestroyed() ? island.getBounds() : null;
+    return { bounds, cx: b ? b.x + b.width / 2 : bounds.x + bounds.width / 2 };
+  },
+  protect: () => store.get('discretion', 'hideFromCapture'),
+  above: () => (island && !island.isDestroyed() ? island : null),
+});
+
+ipcMain.on('glow', (_e, msg) => {
+  if (aside || !island || island.isDestroyed()) return glow.off();
+  glow.set(msg || {});
+});
 
 function createIsland() {
   island = new BrowserWindow({
@@ -120,6 +139,7 @@ function createIsland() {
  */
 function applyCaptureProtection() {
   if (island && !island.isDestroyed()) island.setContentProtection(store.get('discretion', 'hideFromCapture') !== false);
+  glow.applyProtection();
 }
 
 function send(channel, data) {
@@ -271,6 +291,7 @@ ipcMain.on('aside', (_e, on) => {
     dropNear = false;
     foreground.watchButton(false);
     applyMouse();
+    glow.off();
     island.hide();
   } else {
     island.showInactive();
@@ -564,6 +585,7 @@ const core = {
     modules: host.manifest(),
     states: host.states(),
     alerts: host.alerts,
+    alertLog: host.alertLog(),
     call: host.call.status(),
     system: host.system,
     settings: store.all(),
@@ -581,6 +603,8 @@ const core = {
   },
   openSettings: (section) => openSettings(section),
   dismissAlert: (key) => host.dismissAlert(key),
+  /** « Alertes » : the journal (no op), opened ('seen'), emptied ('clear'). */
+  alertLog: (op) => host.alertLog(op === 'seen' || op === 'clear' ? op : null),
   openExternal: (url) => /^(https?|mailto):/i.test(url) && shell.openExternal(url),
   openPath: (p) => shell.openPath(p),
   quit: () => app.quit(),

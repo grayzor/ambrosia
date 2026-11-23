@@ -22,12 +22,15 @@ const hookServer = require('./hook-server');
 const launcher = require('./launcher');
 const logger = require('./log');
 const { CallMode } = require('./call-mode');
+const { AlertLog } = require('./alert-log');
 const { Suspend, FULLSCREEN_INFO } = require('./system');
 
 class ModuleHost {
   constructor() {
     this.modules = new Map(); // id → { def, state, actions, ctx }
     this.alerts = [];
+    // « Alertes » in the island: every alert, shown or held, in memory only (alert-log.js).
+    this.log = new AlertLog();
     this.island = null; // set by main.js: { send(channel, data), expand(id), reveal() }
     // « En appel » : every ctx.alert goes through it (see call-mode.js).
     this.call = new CallMode(() => store.section('call'));
@@ -278,10 +281,23 @@ class ModuleHost {
   pushAlert(alert) {
     // In a call, what can wait is queued (no peek, no sound) for the recap.
     const a = this.call.admit(alert);
+    if (this.log.add(alert, Date.now(), { held: !a })) this.sendLog();
     if (!a) return this.sendCall();
     this.alerts = this.alerts.filter((x) => x.key !== a.key);
     this.alerts.push({ ttl: store.get('island', 'alertSeconds'), at: Date.now(), ...a });
     this.island?.send('alerts', this.alerts);
+  }
+
+  sendLog() {
+    this.island?.send('alert-log', this.log.snapshot());
+  }
+
+  /** The « Alertes » tab: 'seen' when opened, 'clear' on « Tout effacer ». */
+  alertLog(op) {
+    if (op === 'seen') this.log.seen();
+    else if (op === 'clear') this.log.clear();
+    if (op) this.sendLog();
+    return this.log.snapshot();
   }
 
   dismissAlert(key) {

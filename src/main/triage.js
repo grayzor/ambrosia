@@ -21,8 +21,9 @@
 //
 //   proposer: { max, settings, eligible(item, s), make(c) → proposal | null,
 //               apply(c) → { ok, error, url, done }, alert(item) → alert fields }
-//   proposal: { headline, ask, analysis, read: { from, date, text },
-//               text: { label, value }, actions: [{ act, label, primary, usesText }], data }
+//   proposal: { headline, ask, analysis, sources: [{ title, url }], next, missing,
+//               read: { from, date, text }, text: { label, value },
+//               actions: [{ act, label, primary, usesText }] (may be empty: an analysis alone), data }
 //
 // Handled at the source (optional `cfg.settle`): the user often answers in Gmail,
 // Chat or ClickUp directly. Each check lists the cards still open in the prompt;
@@ -68,6 +69,7 @@ const SEVERITY = { urgent: 3, important: 2, normal: 1, noise: 0 };
 const HOW = {
   read: 'lu',
   replied: 'répondu',
+  others: 'réglé par quelqu’un d’autre',
   answered: 'invitation répondue',
   archived: 'archivé',
   closed: 'fermé',
@@ -453,12 +455,15 @@ function triage(cfg) {
             model: s.proposeModel || 'sonnet',
             rejected: data.rejected.slice(-15),
           });
-          if (!p || !Array.isArray(p.actions) || !p.actions.length || disposed) return false;
+          // An analysis alone (what Gany found, the next step) is worth a card too.
+          if (!p || disposed) return false;
+          if (!Array.isArray(p.actions)) p.actions = [];
+          if (!p.actions.length && !p.analysis) return false;
           item.proposal = p;
           item.proposalAt = Date.now();
           item.applied = {};
           save();
-          ctx.log(`proposal for ${item.id}: ${p.actions.map((a) => a.act).join(', ')}`);
+          ctx.log(`proposal for ${item.id}: ${p.actions.map((a) => a.act).join(', ') || 'analysis'}`);
           return true;
         } catch (err) {
           ctx.log('proposal crashed', err);
@@ -639,7 +644,9 @@ function triage(cfg) {
               if (ok && alerted.has(item.id) && !item.read && !item.done) itemAlert(item, false);
             }),
           );
-          if (jobs.length) {
+          // Something urgent never waits for an analysis: its alert goes now, the analysis
+          // lands on the card (and gets its own silent moment) when it is ready.
+          if (jobs.length && !fresh.some((i) => i.verdict === 'urgent')) {
             const budget = delay(cfg.proposer.budgetMs ?? 90000);
             await Promise.race([Promise.all(jobs), budget]);
             budget.cancel();

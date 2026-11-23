@@ -65,16 +65,8 @@ button { font: inherit; color: inherit; }
 #island.mode-peek { --gx: 12px; --gy: 6px; --gs: 54px; }
 #island.mode-open { --gx: 14px; --gy: 6px; --gs: 70px; }
 
-/* Glow under the notch when something wants attention */
-#island.attention::after {
-  content: "";
-  position: absolute; left: 18%; right: 18%; bottom: -1px; height: 2px;
-  background: var(--nectar);
-  border-radius: 2px;
-  filter: blur(.4px);
-  animation: glow 1.6s ease-in-out infinite;
-}
-@keyframes glow { 50% { opacity: .35; } }
+/* No mark under the notch: what calls for a quick action is said by its icon and by
+   the glow along the top of the screen (src/renderer/glow-rules.js). */
 
 /* ── Notch row ────────────────────────────────────────────────────────────── */
 
@@ -237,14 +229,7 @@ input.text:focus, textarea.text:focus { border-color: rgba(232,185,35,.5); }
 .peek-actions:empty { display: none; }
 
 /* A meeting starting or running without you */
-#island.alarm::after {
-  content: "";
-  position: absolute; left: 10%; right: 10%; bottom: -1px; height: 3px;
-  background: linear-gradient(90deg, #F0616D, #F2A65A, #F0616D);
-  border-radius: 2px;
-  animation: glow .8s ease-in-out infinite;
-}
-#island.alarm { box-shadow: 0 6px 30px rgba(240,97,109,.35), 0 0 0 1px rgba(240,97,109,.4); }
+#island.alarm { box-shadow: 0 6px 24px rgba(240,97,109,.25); }
 
 /* Tabs: brand logos; quiet sections are icon-only, the ones that need you are loud */
 .tab .logo { width: 15px; height: 15px; object-fit: contain; flex: none; }
@@ -303,7 +288,8 @@ input.text:focus, textarea.text:focus { border-color: rgba(232,185,35,.5); }
 #launch { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 6; display: none; }
 
 /* An approval has been waiting for minutes: the underline hurries */
-#island.impatient.attention::after { height: 3px; animation-duration: .7s; }
+.chip.cta .chip-logo { width: 15px; height: 15px; }
+.chip.cta .ico { font-size: 14px; color: var(--c); }
 
 /* Focus mode: Gany makes himself tiny, only what is urgent shows */
 #island.focus.mode-notch { --gx: 10px; --gy: 6px; --gs: 18px; }
@@ -395,3 +381,133 @@ pre.ocr-text {
 .cv-wave i:nth-child(4) { animation-delay: .36s !important; }
 .cv-wave i:nth-child(5) { animation-delay: .48s !important; }
 @keyframes cv-bar { 0%, 100% { height: 5px; } 50% { height: 18px; } }
+
+/* ── Tab bar: one button group. The section open: logo + its name, large; the others:
+   their logo, discreet, and a dot when something waits there (no numbers). ── */
+#tabs { gap: 8px; align-items: center; }
+.seg-group {
+  display: inline-flex; align-items: center; gap: 2px; padding: 3px; min-width: 0;
+  border-radius: 15px; background: var(--card); border: 1px solid var(--line);
+}
+.seg-group.solo { flex: none; }
+.seg {
+  position: relative; flex: none; display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  height: 28px; min-width: 30px; padding: 0 7px; border: 0; border-radius: 11px;
+  background: transparent; color: var(--faint); cursor: pointer; transition: background .15s, color .15s;
+}
+.seg .logo { width: 15px; height: 15px; object-fit: contain; flex: none; opacity: .55; filter: grayscale(.7); transition: opacity .15s, filter .15s; }
+.seg .ico { font-size: 13px; flex: none; }
+.seg .ico.svg { display: grid; place-items: center; }
+.seg .ico.svg svg { width: 16px; height: 16px; }
+.seg:hover { background: var(--card-2); color: var(--text); }
+.seg:hover .logo { opacity: 1; filter: none; }
+.seg.sel {
+  flex: 0 1 auto; min-width: 0; padding: 0 12px 0 9px; color: var(--text);
+  background: color-mix(in srgb, var(--c) 20%, var(--card-2));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c) 50%, transparent);
+}
+.seg.sel .logo { opacity: 1; filter: none; }
+.seg.sel .ico { color: var(--c); }
+.seg-name { font-size: 13.5px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.seg.more { font-size: 15px; font-weight: 800; line-height: 1; }
+.seg.more.open { background: var(--card-2); color: var(--text); }
+.seg-dot { position: absolute; top: 4px; right: 4px; width: 6px; height: 6px; border-radius: 50%; background: var(--c); box-shadow: 0 0 0 2px var(--card); pointer-events: none; }
+.seg-dot.inline { position: static; margin-left: auto; flex: none; box-shadow: none; }
+.tab-gap { flex: 1; min-width: 0; }
+.ico.svg svg { width: 15px; height: 15px; }
+
+/* ── Accueil ──────────────────────────────────────────────────────────────── */
+.home-h { font-size: 10.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--faint); margin: 12px 2px 6px; }
+.home-h:first-child { margin-top: 2px; }
+.home-h .link { text-transform: none; letter-spacing: 0; font-weight: 600; }
+.home-meet {
+  display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 14px;
+  background: var(--card); border: 1px solid var(--line); cursor: pointer;
+}
+.home-meet:hover { background: var(--card-2); }
+.home-meet.live { border-color: rgba(240,97,109,.5); }
+.hm-time { display: flex; flex-direction: column; align-items: flex-end; width: 40px; flex: none; line-height: 1.25; }
+.hm-time .mono { color: var(--gold-light); font-weight: 600; }
+.hm-bar { width: 3px; align-self: stretch; border-radius: 2px; background: #F2A65A; flex: none; }
+.home-meet.live .hm-bar { background: #F0616D; }
+.hm-live { color: #FF9AA3; font-size: 10px; letter-spacing: .06em; }
+.home-line { display: flex; align-items: center; gap: 8px; padding: 4px 4px 2px; cursor: pointer; }
+.home-line .logo { width: 14px; height: 14px; opacity: .7; }
+.home-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.home-tile {
+  display: flex; flex-direction: column; gap: 4px; min-width: 0; text-align: left; cursor: pointer;
+  padding: 8px 10px; border-radius: 12px; color: var(--text);
+  background: color-mix(in srgb, var(--c) 8%, var(--card)); border: 1px solid color-mix(in srgb, var(--c) 28%, transparent);
+  transition: background .15s;
+}
+.home-tile:hover { background: color-mix(in srgb, var(--c) 15%, var(--card)); }
+.home-tile .logo { width: 14px; height: 14px; object-fit: contain; flex: none; }
+.home-tile .count { min-width: 16px; height: 16px; padding: 0 5px; border-radius: 8px; background: var(--c); color: #120E04; font-size: 10.5px; font-weight: 700; display: grid; place-items: center; flex: none; }
+.ht-text { font-size: 12px; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.home-calm { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 14px; background: var(--card); border: 1px solid var(--line); }
+.home-calm-ico { font-size: 20px; color: var(--gold-light); }
+
+/* ── Alertes ──────────────────────────────────────────────────────────────── */
+.al-chips { display: flex; gap: 6px; flex-wrap: wrap; margin: 0 0 4px; }
+.al-chip {
+  display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 9px; border-radius: 12px;
+  border: 1px solid var(--line); background: var(--card); color: var(--dim); font-size: 11.5px; font-weight: 600; cursor: pointer;
+}
+.al-chip:hover { color: var(--text); }
+.al-chip.sel { color: var(--text); background: color-mix(in srgb, var(--c) 18%, var(--card)); border-color: color-mix(in srgb, var(--c) 60%, transparent); }
+.al-chip .logo { width: 13px; height: 13px; object-fit: contain; }
+.al-list { display: flex; flex-direction: column; gap: 4px; }
+.al-row { display: flex; align-items: flex-start; gap: 10px; padding: 8px 10px; border-radius: 12px; background: var(--card); border: 1px solid var(--line); min-width: 0; }
+.al-row.compact { align-items: center; padding: 6px 10px; }
+.al-row.go { cursor: pointer; }
+.al-row.go:hover { background: var(--card-2); }
+.al-row.new { box-shadow: inset 3px 0 0 var(--c); }
+.al-ico { width: 24px; height: 24px; border-radius: 8px; display: grid; place-items: center; flex: none; background: color-mix(in srgb, var(--c) 16%, transparent); color: var(--c); }
+.al-ico .logo { width: 14px; height: 14px; object-fit: contain; }
+.al-title { font-size: 12.5px; font-weight: 600; }
+.al-title .from { color: var(--gold-light); }
+.al-text { font-size: 11.5px; color: var(--dim); margin-top: 1px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.al-side { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; flex: none; }
+
+/* ── Agenda: the month on the left, the day picked on the right ───────────── */
+.ag-split { display: grid; grid-template-columns: 188px minmax(0, 1fr); gap: 12px; align-items: start; }
+.ag-cal { position: sticky; top: 0; padding: 10px 8px 8px; border-radius: 14px; background: var(--card); border: 1px solid var(--line); }
+.cal-head { gap: 4px; padding: 0 2px; }
+.cal-head .title { font-size: 12.5px; }
+.cal-nav { width: 22px; height: 22px; border-radius: 11px; border: 0; background: var(--card-2); color: var(--dim); cursor: pointer; font-weight: 700; line-height: 1; }
+.cal-nav:hover:not(:disabled) { color: var(--text); }
+.cal-nav:disabled { opacity: .3; cursor: default; }
+.cal-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 2px; margin-top: 6px; }
+.cal-wd { text-align: center; font-size: 9.5px; font-weight: 700; color: var(--faint); padding-bottom: 2px; }
+.cal-day {
+  height: 27px; padding: 3px 0 0; border: 0; border-radius: 9px; background: transparent; color: var(--text);
+  font-size: 11.5px; font-weight: 600; font-variant-numeric: tabular-nums; cursor: pointer;
+  display: flex; flex-direction: column; align-items: center;
+}
+.cal-day:hover:not(:disabled) { background: var(--card-2); }
+.cal-day.out { color: var(--dim); }
+.cal-day.past, .cal-day.far { color: var(--faint); opacity: .55; cursor: default; }
+.cal-day.today { box-shadow: inset 0 0 0 1.5px color-mix(in srgb, #F2A65A 75%, transparent); }
+.cal-day.sel { background: #F2A65A; color: #1A1204; box-shadow: none; }
+.cal-dots { display: flex; gap: 2px; height: 4px; margin-top: 2px; }
+.cal-dots i { width: 4px; height: 4px; border-radius: 50%; background: #F2A65A; }
+.cal-dots i.inv { background: var(--gold-light); box-shadow: 0 0 4px var(--gold-light); }
+.cal-dots i.more { background: var(--dim); }
+.cal-day.sel .cal-dots i { background: #1A1204; box-shadow: none; }
+.cal-foot { margin-top: 6px; text-align: center; }
+.ag-day-head { margin: 0 2px 8px; min-height: 36px; }
+.ag-day-name { font-weight: 700; font-size: 14px; }
+.ag-events { display: flex; flex-direction: column; gap: 4px; }
+.ag-ev { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 12px; background: var(--card); border: 1px solid var(--line); min-width: 0; }
+.ag-ev-time { display: flex; flex-direction: column; align-items: flex-end; width: 40px; flex: none; line-height: 1.25; }
+.ag-ev-time .mono { color: var(--gold-light); font-weight: 600; }
+.ag-ev-bar { width: 3px; align-self: stretch; border-radius: 2px; background: #F2A65A; flex: none; }
+.ag-ev.inv .ag-ev-bar { background: repeating-linear-gradient(180deg, var(--gold-light) 0 4px, transparent 4px 7px); }
+.ag-ev.maybe .ag-ev-bar { background: var(--dim); }
+.ag-ev.focus .ag-ev-bar { background: #B79CFF; }
+.ag-ev .pill { height: 16px; font-size: 10px; }
+
+/* Gany's own analysis on a triage card (src/main/lookup.js) */
+.prop-analysis { white-space: pre-wrap; margin-top: 2px; }
+.prop-next { color: var(--gold-light); font-weight: 600; }
+.prop-sources { margin-top: 2px; }

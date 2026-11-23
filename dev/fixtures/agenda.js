@@ -9,6 +9,8 @@
 //   ?alert=invite / notes   a new invitation, the after-meeting alert
 //   ?alert=mirror           « Me voir » clicked: the mirror opens in the tab
 
+import '/src/modules/agenda/calendar.js'; // globalThis.AmbrosiaCalendar, as in the view
+
 const MIN = 60000;
 const now = Date.now();
 const iso = (min) => new Date(now + min * MIN).toISOString();
@@ -44,6 +46,23 @@ const INVITATIONS = [
     conflicts: [], responding: null, error: null,
   },
 ];
+
+// The next 14 days (fictional), as the hourly look-ahead brings them: the tab's calendar.
+const BUSY = [
+  [1, 9, 0, 30, 'Point hebdo support'], [1, 10, 30, 60, 'Point hebdo support'], [1, 14, 0, 60, 'Atelier caisses Lyon'],
+  [2, 9, 30, 30, 'Daily HelpDesk'], [2, 16, 0, 45, 'Revue ATLAS'],
+  [3, 9, 30, 30, 'Daily HelpDesk'], [3, 12, 0, 60, 'Déjeuner équipe'],
+  [6, 9, 30, 30, 'Daily HelpDesk'], [6, 11, 0, 90, 'Comité ATLAS'],
+  [8, 10, 0, 60, 'Formation Olympe Industries'], [9, 15, 0, 30, 'Point prestataire TPE'],
+  [13, 9, 30, 30, 'Daily HelpDesk'],
+].map(([d, hh, mm, dur, title], i) => ({ id: 'busy' + i, title, start: at(d, hh, mm), end: new Date(Date.parse(at(d, hh, mm)) + dur * MIN).toISOString(), selfResponse: i === 4 ? 'tentative' : 'accepted', meetUrl: i % 3 ? 'https://meet.google.com/example' : '' }));
+BUSY.push({ id: 'off', title: 'Congés', start: at(10, 0).slice(0, 10), end: at(11, 0).slice(0, 10), selfResponse: 'accepted', eventType: 'OUT_OF_OFFICE' });
+
+function calendar(meetings) {
+  const events = (meetings || []).map((m) => ({ id: m.id, title: m.title, start: new Date(m.startMs).toISOString(), end: new Date(m.endMs).toISOString(), selfResponse: m.selfResponse || 'accepted', meetUrl: m.meetUrl }));
+  const invites = INVITATIONS.map((i) => ({ id: i.id, title: i.title, start: i.start, end: i.end, selfResponse: 'needsAction', meetUrl: 'x' }));
+  return { ...globalThis.AmbrosiaCalendar.buildDays({ events, busy: BUSY, invitations: invites }, Date.now()), readAt: Date.now() - 22 * MIN };
+}
 
 const NOTES = [
   {
@@ -119,6 +138,7 @@ export default {
       clickupList: { id: '901234', name: 'Actions de réunion' },
       meetings: (st.meetings || []).map((m) => ({ ...m, late: lateDraft(m.id, m.title), lateSending: false })),
     });
+    st.calendar = calendar(st.meetings);
     return st;
   },
 
