@@ -13,8 +13,10 @@ import { h, mount, ago, clip, markdown } from './ui.js';
 import { Launch, launchKind, reducedMotion } from './launch.js';
 import { VoicePlayer } from './voice.js';
 import './wardrobe.js'; // plain script: globalThis.AmbrosiaWardrobe (also required by the gany module)
+import './glow-rules.js'; // plain script: globalThis.AmbrosiaGlowRules (tests/glow.test.js)
 
 const Wardrobe = globalThis.AmbrosiaWardrobe;
+const GlowRules = globalThis.AmbrosiaGlowRules;
 
 const api = window.ambrosia;
 const $ = (s) => document.querySelector(s);
@@ -38,6 +40,7 @@ const S = {
   call: null, // « en appel » from the main process: { active, title, kinds, queued, threshold }
   system: {}, // Windows, from the main process: { locked, fullscreen, dnd }
   update: {}, // src/main/updater.js: { status, ready, running, mode… }
+  log: { items: [], seenAt: 0, unseen: 0 }, // « Alertes »: src/main/alert-log.js, in memory only
 };
 
 const gany = new Gany(canvas);
@@ -132,6 +135,7 @@ function setMode(mode) {
   const was = S.mode;
   S.mode = mode;
   if (mode === 'open') {
+    openSession++;
     currentPhrase = phrase();
     renderOpen(); // silent: unfolding on hover is not news
   } else if (was === 'open') {
@@ -144,6 +148,8 @@ function setMode(mode) {
 }
 
 // ── Opening and closing ──────────────────────────────────────────────────
+
+let openSession = 0; // counts the unfoldings (« Alertes » marks what was new at this one)
 
 let hoverTimer = null;
 let leaveTimer = null;
@@ -593,7 +599,7 @@ api.on('cursor', ({ x, y, sx, sy }) => {
 let press = null;
 let holdTimer = null;
 let swallowClick = false;
-const NOT_A_HANDLE = 'button, input, textarea, select, a, .tab, .choice, #panel, .ticker';
+const NOT_A_HANDLE = 'button, input, textarea, select, a, .tab, .seg, .choice, #panel, .ticker';
 
 island.addEventListener('pointerdown', (e) => {
   if (e.button !== 0 || e.target.closest(NOT_A_HANDLE)) return;
@@ -647,8 +653,22 @@ island.addEventListener('click', (e) => {
 
 // ── Mood ─────────────────────────────────────────────────────────────────
 
+/** What calls for a quick action (approval, question, meeting soon / now / late): mood priority ≥ this. */
+const CTA_PRIORITY = 85;
+
+/** The most urgent module asking for a quick action: { module, mood, priority, color } or null. */
+function callToAction() {
+  let best = null;
+  for (const m of S.modules) {
+    const mood = m.enabled !== false && S.states[m.id]?.mood;
+    if (!mood?.name || (mood.priority ?? 0) < CTA_PRIORITY || (best && mood.priority <= best.priority)) continue;
+    best = { module: m, mood: mood.name, priority: mood.priority, color: GlowRules.MOOD_COLORS[mood.name] || m.color };
+  }
+  return best;
+}
+
 function attention() {
-  return Object.values(S.states).some((st) => (st?.mood?.priority ?? 0) >= 60);
+  return !!callToAction();
 }
 
 /** In a call, Gany keeps quiet about everything below the threshold. */
@@ -665,6 +685,8 @@ function updateMood() {
   if (best.name === 'meeting-call' && focusing()) best = { name: 'focus', priority: 1 }; // Gany's focus mode
   applyFocus();
   if (S.alert?.mood && (S.alert.priority ?? 50) > best.priority && !(hushed() && S.mode !== 'peek')) best = { name: S.alert.mood, priority: S.alert.priority ?? 50 };
+  // What waits for a quick action lights the top of the screen (a Chat card's « question » mood does not).
+  sendGlow(callToAction()?.mood);
   if (S.localMood && S.localMood.until > Date.now()) best = S.localMood;
   else if (best.priority === 0) {
     const idleFor = Date.now() - S.lastActivity;
@@ -674,11 +696,44 @@ function updateMood() {
   // Windows session locked: Gany sleeps until you are back (src/main/modules.js → setSystem).
   if (S.system.locked) best = { name: 'sleeping' };
   gany.setMood(best.name);
-  island.classList.toggle('attention', attention() && S.mode !== 'open' && !hushed());
+  const cta = callToAction();
+  island.classList.toggle('attention', !!cta && S.mode !== 'open' && !hushed());
   // Red glow for a meeting that starts or runs without you.
   island.classList.toggle('alarm', /^meeting-(now|late)$/.test(best.name));
 }
 setInterval(updateMood, 30000);
+
+// ── The glow along the top of the screen (glow-rules.js → src/main/glow.js) ──
+
+function glowCtx() {
+  return {
+    setting: S.settings.island?.glow ?? 'auto',
+    paused: !!S.settings.general?.paused,
+    locked: !!S.system.locked,
+    hushed: hushed(),
+    focus: focusing(),
+    fullscreen: !!S.system.fullscreen,
+    open: S.mode === 'open',
+  };
+}
+
+let glowSteady = null;
+let glowSent = 'null';
+/** The light that stays while something waits; sent only when it changes. */
+function sendGlow(mood) {
+  glowSteady = GlowRules.steady(mood, glowCtx());
+  const key = JSON.stringify(glowSteady);
+  if (key === glowSent) return;
+  glowSent = key;
+  api.send('glow', { steady: glowSteady });
+}
+
+/** A new alert with a sound: one wave, the most urgent of the batch. */
+function glowWave(fresh) {
+  const a = [...fresh].sort((x, y) => (y.priority ?? 50) - (x.priority ?? 50))[0];
+  const w = a && GlowRules.wave(a, glowCtx(), S.modules.find((m) => m.id === a.module)?.color);
+  if (w) api.send('glow', { steady: glowSteady, wave: { ...w, id: `${a.key}#${a.at}` } });
+}
 
 // ── Alerts ───────────────────────────────────────────────────────────────
 
@@ -700,6 +755,7 @@ function onAlerts(list) {
   S.alerts = list;
   if (fresh.length) launcher?.interrupt();
   for (const a of fresh) if (a.sound) Sound.play(a.sound);
+  if (fresh.length) glowWave(fresh);
   if (fresh.some((a) => a.confetti)) confetti();
   if (fresh.length) S.lastActivity = Date.now();
   const top = currentAlert();
@@ -827,27 +883,22 @@ function renderNotch() {
     mount($('#notch-row'), tickerEl(ticker));
     return setMode('notch');
   }
+  // At rest, the notch stays quiet: Gany alone. Only what calls for a quick action of
+  // yours (an approval or a question of Claude Code, a meeting about to start or running
+  // without you) brings ONE icon, and the coloured circle under the notch. The rest
+  // (mails, ClickUp, Chat…) waits in the island, seen when you unfold it.
+  const cta = callToAction();
   const chips = [];
-  for (const s of summaries()) {
-    // `progress` (0..1): the dot becomes a ring that fills up (Scripts).
-    for (const d of s.dots || []) {
-      const ring = typeof d.progress === 'number';
-      chips.push(h('span.chip', h('span.dot' + (d.pulse ? '.pulse' : '') + (ring ? '.ring' : ''), { style: { '--c': d.color, '--p': ring ? `${Math.round(d.progress * 360)}deg` : null } })));
-    }
-    if (s.badge) {
-      // The logo says which source; the glyph in front of the text is then redundant.
-      const text = s.module.logo ? String(s.badge.text).replace(/^[^\p{L}\p{N}!]\s+/u, '') : s.badge.text;
-      chips.push(h('span.chip', s.module.logo ? moduleIcon(s.module, 'chip-logo') : null, h('span.chip.badge', { style: { '--c': s.badge.color || s.module.color } }, text)));
-    }
-  }
-  // Laurels for an on-time meeting streak (Agenda).
-  const trophy = summaries().find((x) => x.trophy);
-  if (trophy) chips.unshift(h('span.chip.trophy', { title: `${trophy.trophy} réunions à l’heure d’affilée` }, '🏆', String(trophy.trophy)));
-  // In a call: a quiet mark, and how many things wait for the recap.
   if (hushed()) {
     const q = S.call.queued || 0;
-    chips.unshift(h('span.chip.call', { title: q ? `${hushName()} : ${q} en attente pour après` : `${hushName()} : Gany ne dérange pas` }, '◐', q ? String(q) : null));
+    chips.push(h('span.chip.call', { title: q ? `${hushName()} : ${q} en attente pour après` : `${hushName()} : Gany ne dérange pas` }, '◐'));
+  } else if (cta) {
+    const s = summaries().find((x) => x.module.id === cta.module.id);
+    chips.push(h('span.chip.cta', { title: s?.text || cta.module.name, style: { '--c': cta.color } }, moduleIcon(cta.module, 'chip-logo')));
   }
+  // A state that must never go unseen (the microphone is open): its dot, whatever the rest.
+  const kept = summaries().flatMap((s) => (s.dots || []).filter((d) => d.keep))[0];
+  if (kept) chips.push(h('span.chip', { title: 'Micro ouvert' }, h('span.dot' + (kept.pulse ? '.pulse' : ''), { style: { '--c': kept.color } })));
   mount($('#notch-row'), chips);
   if (S.mode === 'notch' || S.mode === 'line') setMode('notch');
 }
@@ -858,6 +909,8 @@ const ICONS = {
   play: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M7 5l12 7-12 7z"/></svg>',
   sound: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H3v6h3l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/></svg>',
   update: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11"/><path d="m7 10 5 5 5-5"/><path d="M5 20h14"/></svg>',
+  home: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11.5 12 5l8 6.5"/><path d="M6.5 10v9h11v-9"/><path d="M10 19v-5h4v5"/></svg>',
+  bell: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15z"/><path d="M10 20.5a2.2 2.2 0 0 0 4 0"/></svg>',
   mute: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H3v6h3l5 4z"/><path d="m22 9-6 6M16 9l6 6"/></svg>',
 };
 
@@ -976,9 +1029,19 @@ function updateBtn() {
   return b;
 }
 
-const viewable = (id) => S.modules.some((m) => m.id === id && m.enabled && S.views[id]);
-const firstViewable = () => S.modules.find((m) => m.enabled && S.views[m.id])?.id || null;
+// Two sections belong to the island itself, not to a module: « Accueil » (what
+// matters now, from every module's summary) and « Alertes » (what Gany said lately,
+// src/main/alert-log.js). Their ids start with « @ »: never a module id.
+const CORE = {
+  '@home': { id: '@home', name: 'Accueil', svg: 'home', color: '#F8DC6C' },
+  '@alerts': { id: '@alerts', name: 'Alertes', svg: 'bell', color: '#F8DC6C' },
+};
+const viewable = (id) => !!CORE[id] || S.modules.some((m) => m.id === id && m.enabled && S.views[id]);
+const firstViewable = () => '@home';
 
+// The tab bar: Accueil first, the modules, « ⋮ », then the Alertes bell on the right.
+// The section open is a pill with its NAME (no doubt about where you are); the others
+// are their logo, plus their count when something waits there.
 // Sections rarely visited (`secondary` in the module) wait behind « ⋮ », in a
 // vertical list under the tabs: the button carries their count, and only the one
 // open comes into the row (`moreOpen` is declared with close()).
@@ -991,33 +1054,40 @@ function renderTabs() {
     (m.secondary && S.selected !== m.id ? tucked : shown).push(m);
   }
   if (!tucked.length) moreOpen = false;
-  const tab = (m) => {
-    // Quiet sections are just their logo; a section that needs you shows
-    // logo + name + count, so the eye goes straight to it.
-    const count = sums[m.id]?.count;
+  // One segment per section. The one open: its logo and its name, large. The others:
+  // their logo, discreet, and a dot when something waits there. No numbers.
+  const seg = (m, todo = !!sums[m.id]?.count, title) => {
+    const sel = S.selected === m.id;
     return h(
-      'button.tab' + (S.selected === m.id ? '.sel' : '') + (count ? '.loud' : '.quiet'),
-      { style: { '--c': m.color }, title: sums[m.id]?.text ? `${m.name} — ${sums[m.id].text}` : m.name, onclick: () => select(m.id) },
+      'button.seg' + (sel ? '.sel' : ''),
+      { style: { '--c': m.color }, title: title || (sums[m.id]?.text ? `${m.name} — ${sums[m.id].text}` : m.name), onclick: () => select(m.id) },
       moduleIcon(m),
-      count ? [h('span.tab-name', m.name), h('span.count', String(count))] : null,
+      sel ? h('span.seg-name', m.name) : null,
+      todo && !sel ? h('i.seg-dot') : null,
     );
   };
-  const waiting = tucked.reduce((n, m) => n + (Number(sums[m.id]?.count) || 0), 0);
+  const waiting = tucked.some((m) => sums[m.id]?.count);
   const toggle = () => {
     moreOpen = !moreOpen;
     renderTabs();
   };
+  const unseen = S.log.unseen || 0;
   mount(
     $('#tabs'),
-    shown.map(tab),
-    tucked.length
-      ? h(
-          'button.tab.more' + (moreOpen ? '.sel' : '') + (waiting ? '.loud' : '.quiet'),
-          { title: `Autres sections : ${tucked.map((m) => m.name).join(', ')}`, onclick: toggle },
-          h('span.ico', '⋮'),
-          waiting ? h('span.count', String(waiting)) : null,
-        )
-      : null,
+    h('div.seg-group',
+      seg(CORE['@home'], false, 'Accueil — ce qui compte maintenant'),
+      shown.map((m) => seg(m)),
+      tucked.length
+        ? h(
+            'button.seg.more' + (moreOpen ? '.open' : ''),
+            { style: { '--c': 'var(--gold-light)' }, title: `Autres sections : ${tucked.map((m) => m.name).join(', ')}`, onclick: toggle },
+            h('span.ico', '⋮'),
+            waiting ? h('i.seg-dot') : null,
+          )
+        : null,
+    ),
+    h('span.tab-gap'),
+    h('div.seg-group.solo', seg(CORE['@alerts'], unseen > 0, unseen ? `Alertes — ${unseen} nouvelle${unseen > 1 ? 's' : ''}` : 'Alertes récentes')),
   );
   mount(
     moreList(),
@@ -1036,7 +1106,7 @@ function renderTabs() {
             moduleIcon(m),
             h('span.more-name', m.name),
             sums[m.id]?.text ? h('span.more-sub', sums[m.id].text) : null,
-            sums[m.id]?.count ? h('span.count', String(sums[m.id].count)) : null,
+            sums[m.id]?.count ? h('i.seg-dot.inline') : null,
           ),
         )
       : null,
@@ -1056,6 +1126,11 @@ function moreList() {
 
 /** The module's brand logo when it has one, its glyph otherwise. */
 function moduleIcon(m, cls = 'logo') {
+  if (m.svg) {
+    const el = h('span.ico.svg');
+    el.innerHTML = ICONS[m.svg]; // static, trusted SVG only
+    return el;
+  }
   return m.logo ? h(`img.${cls}`, { src: m.logo, alt: '', draggable: false }) : h('span.ico', m.icon);
 }
 
@@ -1098,6 +1173,19 @@ function uiFor(id) {
 function renderPanel(force = false) {
   const panel = $('#panel');
   const id = S.selected;
+  if (CORE[id]) {
+    mounted.id = id;
+    const scroll = panel.scrollTop;
+    panel.replaceChildren();
+    try {
+      (id === '@home' ? renderHome : renderAlerts)(panel);
+    } catch (err) {
+      console.error(id, err);
+      mount(panel, h('div.empty', `${CORE[id].name} a planté : ${err.message}`));
+    }
+    panel.scrollTop = scroll;
+    return;
+  }
   const view = S.views[id];
   if (!view) return mount(panel, h('div.empty', 'Aucun module actif. Active-en dans les réglages.'));
   const state = S.states[id] || {};
@@ -1126,6 +1214,145 @@ function renderPanel(force = false) {
   } catch (err) {
     console.error(id, err);
     mount(panel, h('div.empty', `Le module ${id} a planté : ${err.message}`));
+  }
+}
+
+// ── Accueil: what matters now, at a glance ─────────────────────────────
+// Built only from what the modules already publish (summary(), the agenda's
+// meetings, the alerts journal): no module needs to know about it.
+
+const moduleOf = (id) => S.modules.find((m) => m.id === id) || (id === 'core' ? { id: 'core', name: 'Ambrosia', icon: '◎', color: '#F8DC6C' } : { id, name: id, icon: '•', color: '#A39CB0' });
+const hhmm = (ms) => new Date(ms).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+
+/** The meeting running now, else the next one of the day (Agenda's state). */
+function nextMeeting(now = Date.now()) {
+  const list = (S.states.agenda?.meetings || []).filter((m) => m.endMs > now && m.phase !== 'over');
+  return list.find((m) => m.startMs <= now) || list.sort((a, b) => a.startMs - b.startMs)[0] || null;
+}
+
+function homeMeeting(root) {
+  if (!viewable('agenda')) return;
+  const now = Date.now();
+  const m = nextMeeting(now);
+  if (!m) {
+    root.append(h('div.home-line.faint.small', { onclick: () => select('agenda') }, moduleIcon(moduleOf('agenda')), 'Plus aucune réunion aujourd’hui.'));
+    return;
+  }
+  const live = m.startMs <= now;
+  const mins = Math.round((m.startMs - now) / 60000);
+  const when = live ? (m.joined ? 'en cours · connecté ✓' : 'en cours') : mins < 60 ? `dans ${Math.max(1, mins)} min` : `à ${hhmm(m.startMs)}`;
+  const joinable = m.meetUrl && !m.joined && (live || mins <= 15);
+  root.append(
+    h('div.home-meet' + (live && !m.joined ? '.live' : ''), { onclick: () => select('agenda') },
+      h('div.hm-time',
+        h('span.mono', hhmm(m.startMs)),
+        h('span.faint.small', hhmm(m.endMs)),
+      ),
+      h('i.hm-bar'),
+      h('div.grow',
+        h('div.title.ellipsis', { title: m.title }, m.title),
+        h('div.small.dim.ellipsis', live ? h('b.hm-live', 'EN DIRECT') : null, live ? ' · ' : null, when, m.attendees ? ` · ${m.attendees} participants` : ''),
+      ),
+      joinable
+        ? h('button.btn.sm.primary', { onclick: (e) => { e.stopPropagation(); Sound.play('send'); api.action('agenda', 'join', { id: m.id }); } }, 'Rejoindre')
+        : null,
+    ),
+  );
+}
+
+function homeWaiting(root) {
+  const waiting = summaries()
+    .filter((s) => s.count && viewable(s.module.id))
+    .sort((a, b) => (S.states[b.module.id]?.mood?.priority ?? 0) - (S.states[a.module.id]?.mood?.priority ?? 0));
+  root.append(h('div.home-h', 'Ce qui t’attend'));
+  if (!waiting.length) {
+    root.append(h('div.home-calm', h('span.home-calm-ico', '✦'), h('div', h('div.title', 'L’Olympe est en ordre.'), h('div.small.dim', 'Rien ne t’attend. Gany veille.'))));
+    return;
+  }
+  root.append(
+    h('div.home-grid',
+      waiting.map((s) =>
+        h('button.home-tile', { style: { '--c': s.module.color }, title: s.text || s.module.name, onclick: () => select(s.module.id) },
+          h('div.row', moduleIcon(s.module), h('span.grow.ellipsis.small.dim', s.module.name), h('i.seg-dot.inline')),
+          h('div.ht-text', s.text || ''),
+        ),
+      ),
+    ),
+  );
+}
+
+function homeRecent(root) {
+  const items = (S.log.items || []).slice(0, 3);
+  if (!items.length) return;
+  root.append(
+    h('div.home-h.row', h('span.grow', 'Dernières alertes'), h('span.link.small', { onclick: () => select('@alerts') }, 'Tout voir')),
+    h('div.al-list', items.map((it) => alertRow(it, { compact: true }))),
+  );
+}
+
+function renderHome(root) {
+  homeMeeting(root);
+  homeWaiting(root);
+  homeRecent(root);
+}
+
+// ── Alertes: what Gany said lately (src/main/alert-log.js) ─────────────
+// Shown or held for a call, every alert of the last 24 h (in memory only). Opening
+// the tab marks them seen; a click on one opens its module.
+
+let alertFilter = null; // module id, or null for all
+let alertsVisit = null; // { session, seenAt }: what was new when this unfolding reached the tab
+const LogLib = globalThis.AmbrosiaAlertLog;
+
+function alertRow(it, { compact = false, fresh = false } = {}) {
+  const m = moduleOf(it.module);
+  const go = viewable(it.module) ? () => select(it.module) : null;
+  return h('div.al-row' + (fresh ? '.new' : '') + (go ? '.go' : '') + (compact ? '.compact' : ''), { style: { '--c': m.color }, title: [it.title, it.text].filter(Boolean).join('\n'), onclick: go },
+    h('span.al-ico', moduleIcon(m)),
+    h('div.grow',
+      h('div.al-title.ellipsis', it.from ? [h('span.from', it.from), ' · '] : null, it.title || m.name),
+      !compact && it.text ? h('div.al-text', it.text) : null,
+    ),
+    h('div.al-side',
+      h('span.faint.small', ago(it.at)),
+      it.held ? h('span.pill', { title: 'Arrivée pendant un appel, gardée pour après' }, '◐ gardée') : null,
+      it.repeats ? h('span.pill', { title: 'Revenue plusieurs fois' }, `×${it.repeats + 1}`) : null,
+    ),
+  );
+}
+
+function renderAlerts(root) {
+  const log = S.log || { items: [] };
+  if (alertsVisit?.session !== openSession) alertsVisit = { session: openSession, seenAt: log.seenAt || 0 };
+  // After this render (the answer re-renders the tab).
+  if (log.unseen && S.mode === 'open') setTimeout(() => S.selected === '@alerts' && S.mode === 'open' && api.core('alertLog', 'seen').catch(() => {}), 0);
+  const all = log.items || [];
+  const srcs = LogLib ? LogLib.sources(all) : [];
+  if (alertFilter && !srcs.some((s) => s.module === alertFilter)) alertFilter = null;
+  const items = alertFilter ? all.filter((x) => x.module === alertFilter) : all;
+  root.append(
+    h('div.row', { style: { margin: '0 2px 8px' } },
+      h('span.title', 'Notifications récentes'),
+      all.length ? h('span.pill', String(all.length)) : null,
+      h('span.grow'),
+      all.length
+        ? h('button.btn.sm.ghost', { onclick: () => { Sound.play('tick'); alertFilter = null; api.core('alertLog', 'clear').catch(() => {}); } }, 'Tout effacer')
+        : null,
+    ),
+  );
+  if (srcs.length > 1) {
+    const chip = (id, label, count, icon) =>
+      h('button.al-chip' + (alertFilter === id ? '.sel' : ''), { style: { '--c': id ? moduleOf(id).color : 'var(--gold-light)' }, onclick: () => { alertFilter = id; renderPanel(); } }, icon, label, h('span.faint', String(count)));
+    root.append(h('div.al-chips', chip(null, 'Tout', all.length), srcs.map((s) => chip(s.module, moduleOf(s.module).name, s.count, moduleIcon(moduleOf(s.module))))));
+  }
+  if (!items.length) {
+    root.append(h('div.empty', 'Aucune alerte pour l’instant.', h('div.small', { style: { marginTop: '4px' } }, 'Gany garde ici les alertes des dernières 24 h, en mémoire seulement : un redémarrage les oublie.')));
+    return;
+  }
+  const groups = LogLib ? LogLib.groups(items) : [{ label: '', items }];
+  for (const g of groups) {
+    if (g.label) root.append(h('div.home-h', g.label));
+    root.append(h('div.al-list', g.items.map((it) => alertRow(it, { fresh: it.at > alertsVisit.seenAt }))));
   }
 }
 
@@ -1199,7 +1426,7 @@ function onStateChanged(id) {
     renderHeader();
     renderTabs();
     renderOffer();
-    if (id === S.selected) renderPanel();
+    if (id === S.selected || S.selected === '@home') renderPanel();
   }
   updateMood();
   takeKeys();
@@ -1213,6 +1440,14 @@ api.on('state', ({ id, state }) => {
 });
 
 api.on('alerts', onAlerts);
+
+// « Alertes »: the journal changed (a new alert, the tab opened, « Tout effacer »).
+api.on('alert-log', (log) => {
+  S.log = log || { items: [], seenAt: 0, unseen: 0 };
+  if (S.mode !== 'open') return;
+  renderTabs();
+  if (S.selected === '@alerts' || S.selected === '@home') renderPanel();
+});
 
 api.on('call', (call) => {
   S.call = call;
@@ -1348,6 +1583,7 @@ async function boot() {
   S.call = b.call || null;
   S.system = b.system || {};
   S.update = b.update || {};
+  if (b.alertLog) S.log = b.alertLog;
   Sound.configure(b.settings.general || {});
   voice.setMuted(b.settings.general?.sounds === false);
   await loadViews();

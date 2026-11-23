@@ -47,6 +47,7 @@
        dev/island.html?open=agenda opens a module; ?alert=late shows the meeting alarm. -->
   <!-- The real « en appel » logic of the main process (plain script: window.AmbrosiaCallMode) -->
   <script src="/src/main/call-mode.js"></script>
+  <script src="/src/main/alert-log.js"></script>
   <script type="module">
     const MIN = 60000;
     const now = Date.now();
@@ -120,7 +121,9 @@
               read: { from: 'Julie Petit', date: '', text: '@Camille tu confirmes que l’anonymisation couvre bien toutes les tables avant vendredi ?' },
               text: { label: 'Commentaire proposé', value: '[@Julie Petit](#user_mention#1) pas encore : avis__s n’a que client_id, il faut passer par la table de liaison. Je vérifie les colonnes restantes et je reviens vers toi demain.' },
               actions: [{ act: 'comment', label: 'Répondre', primary: true, usesText: true }, { act: 'status', label: 'Passer en « in progress »' }, { act: 'handoff', label: 'Traiter dans HelpDesk' }] } },
-          { id: 'c2', title: '[DATA-753] Adresse de facturation', from: 'Emma Roux', context: 'Réalisation', verdict: 'important', reason: 'Le métier demande', summary: 'Traiter avec Hugo Garnier', url: 'https://app.clickup.com/t/y', at: now - 50 * MIN, read: false },
+          { id: 'c2', title: '[DATA-753] Adresse de facturation', from: 'Emma Roux', context: 'Réalisation', verdict: 'important', reason: 'Le métier demande', summary: 'Traiter avec Hugo Garnier', url: 'https://app.clickup.com/t/y', at: now - 50 * MIN, read: false,
+            // Gany proactif (src/main/lookup.js): an analysis alone, nothing to click.
+            proposal: { kind: 'clickup', headline: 'Gany a analysé le ticket', ask: 'Emma demande pourquoi l’adresse de facturation ne remonte plus pour les clients pro.', analysis: 'Même symptôme que DATA-701 (septembre) : le champ adresse_fact est vide depuis le changement de flux ERP du 3/11. Hugo Garnier a corrigé DATA-701 en remappant le champ dans le flux Olympe.', sources: [{ title: 'DATA-701 · Adresse vide (pro)', url: 'https://app.clickup.com/t/z' }, { title: 'Mail d’Hugo · Nouveau flux ERP', url: '' }], next: 'Réaffecter à Hugo avec le lien vers DATA-701.', missing: 'La date exacte de la première facture concernée.', actions: [] } },
         ] },
         gchat: { status: 'ok', lastCheck: now - 2 * MIN, via: q0.get('via') === 'mails' ? 'Google refuse l’accès au connecteur Chat : Gany lit les mails de rappel de Chat (avec retard) et réessaie toutes les heures.' : null, unread: 2, doneToday: 1, settledToday: 1, settleSource: 'Google Chat', stats: { checked: 23, important: 3, settled: 1 }, items: [
           { id: 'spaces/D1/messages/m1', title: 'Tu peux valider le mapping des pays avant 14 h ?', from: 'Chloé Lambert', context: 'Message direct', verdict: 'urgent', reason: 'Validation attendue aujourd’hui', summary: 'Valider le mapping avant la recette', url: 'https://chat.google.com/dm/D1', at: now - 8 * MIN, read: false, messages: 3 },
@@ -167,10 +170,37 @@
     // Automatic updates (src/main/updater.js): ?update=ready shows « Mettre à jour » in the header.
     const UPDATE_READY = { mode: 'packaged', status: 'ready', running: '0.1.93', ready: '0.1.94', latest: '0.1.94', lastCheck: Date.now(), repo: 'grayzor/ambrosia' };
     let update = new URLSearchParams(location.search).get('update') === 'ready' ? UPDATE_READY : { ...UPDATE_READY, status: 'uptodate', ready: null, latest: '0.1.93' };
+    // « Alertes » : the same journal as the module host (src/main/modules.js → alert-log.js),
+    // seeded with a few fictional alerts of the day; every alert emitted below lands in it too.
+    const alertLog = new window.AmbrosiaAlertLog.AlertLog();
+    {
+      const t = Date.now();
+      const seed = [
+        [26 * 3600e3, { key: 'mail:old', module: 'mail', from: 'Inès Moreau', title: 'Inventaire boutique Lyon', text: 'Les écarts de stock sont dans le fichier partagé.' }],
+        [3 * 3600e3, { key: 'clickup:h1', module: 'clickup', from: 'Julie Petit', title: '[HELP-412] Caisse bloquée à Nantes', text: '@Camille tu peux regarder avant midi ?', sound: 'mail' }],
+        [95 * 60e3, { key: 'agenda:s1', module: 'agenda', from: '10:00', title: 'Dans 3 min : Point hebdo support', text: 'Meet · 6 participants', sound: 'soon' }],
+        [52 * 60e3, { key: 'mail:m0', module: 'mail', from: 'Sophie Bernard', title: 'Reprise des stocks', text: 'Peux-tu confirmer le format du fichier avant jeudi ?', sound: 'mail' }, true],
+        [18 * 60e3, { key: 'claude:f1', module: 'claude', title: 'atlas a fini', text: '3 fichiers modifiés · 128 tests ✓', sound: 'finish' }],
+        [4 * 60e3, { key: 'gchat:c1', module: 'gchat', from: 'Lucas Martin', title: 'Message direct', text: 'Tu as 5 min pour la TPE de Bordeaux ?', sound: 'mail' }],
+      ];
+      for (const [ago, a, held] of seed) alertLog.add(a, t - ago, { held: !!held });
+      alertLog.seen(t - 30 * 60e3);
+    }
+    const { GlowView } = await import('/src/renderer/glow.js');
+    const devGlowBox = Object.assign(document.createElement('div'), { id: 'dev-glow' });
+    devGlowBox.style.cssText = 'position:fixed;left:0;right:0;top:0;height:90px;pointer-events:none';
+    document.body.prepend(devGlowBox);
+    const devGlow = new GlowView(devGlowBox);
     window.ambrosia = {
       on: (ch, fn) => ((handlers[ch] ||= []).push(fn), () => {}),
       core: async (name, payload) => {
-        if (name === 'boot') return { ...fixtures, alerts: [], update, dev: true };
+        if (name === 'boot') return { ...fixtures, alerts: [], alertLog: alertLog.snapshot(), update, dev: true };
+        if (name === 'alertLog') {
+          if (payload === 'seen') alertLog.seen();
+          if (payload === 'clear') alertLog.clear();
+          if (payload) emit('alert-log', alertLog.snapshot());
+          return alertLog.snapshot();
+        }
         if (name === 'update') return update;
         if (name === 'updateInstall') {
           emit('update', (update = { ...update, status: 'installing' }));
@@ -192,9 +222,24 @@
         const fake = fakeActions[`${id}.${name}`];
         return fake ? fake(payload || {}) : extra[id]?.action(name, payload);
       },
-      send: () => {},
+      // The glow along the top of the screen (src/main/glow.js): drawn here across the page.
+      send: (ch, data) => ch === 'glow' && devGlow.set({ ...data, cx: innerWidth / 2 }),
     };
-    const emit = (ch, data) => (handlers[ch] || []).forEach((fn) => fn(data));
+    const seenAlerts = new Set();
+    const emit = (ch, data) => {
+      if (ch === 'alerts') {
+        // Like the host: each new alert goes to the journal once.
+        let fresh = false;
+        for (const a of data || []) {
+          const id = a.key + (a.at || '');
+          if (seenAlerts.has(id)) continue;
+          seenAlerts.add(id);
+          fresh = alertLog.add(a) || fresh;
+        }
+        if (fresh) (handlers['alert-log'] || []).forEach((fn) => fn(alertLog.snapshot()));
+      }
+      (handlers[ch] || []).forEach((fn) => fn(data));
+    };
     for (const [id, f] of Object.entries(extra)) f.connect?.((state) => emit('state', { id, state }), emit);
     // The main process sends the pointer to the island all the time (main.js → 'cursor'): Gany's eyes follow it.
     addEventListener('mousemove', (e) => emit('cursor', { x: e.clientX, y: e.clientY, sx: e.screenX, sy: e.screenY }));
@@ -228,7 +273,7 @@
       if (q.get('open')) emit('expand', { id: q.get('open') });
     }, q.get('launch') === 'full' ? 4300 : 2000); // after the entrance
     const bar = document.getElementById('bar');
-    for (const id of new Set(['agenda', 'mail', 'gchat', 'clickup', 'drive', 'claude', ...Object.keys(extra).filter((k) => extra[k].module.hasView !== false)])) {
+    for (const id of new Set(['@home', '@alerts', 'agenda', 'mail', 'gchat', 'clickup', 'drive', 'claude', ...Object.keys(extra).filter((k) => extra[k].module.hasView !== false)])) {
       const b = Object.assign(document.createElement('button'), { textContent: id, onclick: () => emit('expand', { id }) });
       bar.append(b);
     }

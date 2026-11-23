@@ -37,6 +37,13 @@ const CORE = [
         help: 'Avec plusieurs écrans. « Suivre la souris » attend que le pointeur reste un instant sur un autre écran : le traverser ne déplace pas l’îlot. L’îlot ne change d’écran qu’une fois replié.',
       },
       { key: 'displayId', label: 'Écran choisi', type: 'display', help: 'Pour « Écran choisi ». Débranché, l’îlot revient sur l’écran principal.' },
+      {
+        key: 'glow',
+        label: 'Lueur en haut de l’écran',
+        type: 'select',
+        options: [['auto', 'Autour de l’encoche, tout le haut pour l’urgent'], ['notch', 'Seulement autour de l’encoche'], ['off', 'Jamais']],
+        help: 'Une approbation de Claude Code ou une réunion qui commence sans toi éclaire le haut de l’écran tant qu’elle attend ; une nouvelle alerte sonore y passe une fois. Jamais en appel, en concentration, en pause ni en plein écran.',
+      },
       { key: 'dropZone', label: 'Ouvrir une zone de dépôt quand un fichier glissé approche', type: 'boolean', help: 'Glisse un fichier vers l’encoche : elle s’ouvre pour le recevoir, Gany le boit et te propose un résumé.' },
       { key: 'restDelay', label: 'Temps d’immobilité avant dépliage (ms)', type: 'number', help: 'La souris doit rester immobile sur l’encoche ce temps-là : la survoler en passant ne l’ouvre pas.' },
       { key: 'returnSeconds', label: 'Retour au centre après un déplacement (secondes, 0 = jamais)', type: 'number', help: 'Clic maintenu sur l’encoche puis glisser à gauche ou à droite pour la pousser de côté.' },

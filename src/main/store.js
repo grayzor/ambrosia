@@ -27,6 +27,8 @@ const CORE_DEFAULTS = {
     displayId: '',
     /** A file dragged near the island opens a drop zone (Gany drinks it). */
     dropZone: true,
+    /** The glow along the top of the screen (src/renderer/glow-rules.js): 'auto', 'notch' or 'off'. */
+    glow: 'auto',
   },
   /** Gany knows how to be forgotten (src/main/system.js, main.js « Windows integration »). */
   discretion: {

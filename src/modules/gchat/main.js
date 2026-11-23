@@ -32,7 +32,8 @@ Pas important :
 - les annonces et diffusions dans les espaces sans demande pour moi, les @all ;
 - les messages où je suis seulement en copie, ou dont la question s'adresse à quelqu'un d'autre ;
 - les messages des applications Chat et des robots (alertes automatiques, intégrations) ;
-- les fils où j'ai déjà répondu après le dernier message.`;
+- les fils où j'ai déjà répondu après le dernier message ;
+- les questions auxquelles quelqu'un d'autre a déjà répondu (l'information a été donnée, le problème est réglé, la personne dit que c'est bon).`;
 
 const SYSTEM = `Tu es Gany, l'assistant qui surveille Google Chat pour un chef de projet data/IT très sollicité.
 Ta seule mission : repérer les messages où une personne attend vraiment quelque chose de lui.
@@ -146,6 +147,13 @@ function whoIsMe(data) {
   ].join(' ');
 }
 
+/**
+ * Someone else already answered: « Lucas: what is the TPE-40 code? » then Hugo
+ * gives it. The question no longer waits for the user — for a new message (normal,
+ * handled) as for an open card (settled, how = "others").
+ */
+const OTHERS = `Déjà réglé par quelqu'un d'autre : dans une conversation de groupe ou un espace, si après la demande une AUTRE personne a répondu et que cette réponse règle la demande (l'information demandée est donnée, le problème est résolu, la personne qui demandait dit que c'est bon, qu'elle a trouvé, ou remercie quelqu'un d'autre), la demande n'attend plus l'utilisateur : verdict "normal" et handled = true, même si la question lui était adressée nommément. Exception : une décision, une validation ou une action que seul l'utilisateur peut faire (son accord, son vote, son geste) reste pour lui tant qu'il n'a pas répondu.`;
+
 const TO_ME = `to_me = à qui le message s'adresse : "direct" (message direct, ou demande faite nommément à l'utilisateur : il est celui qu'on interpelle), "reply" (réponse ou suite à un message ou une question de l'utilisateur dans ce fil), "group" (conversation de groupe : question posée à tout le petit groupe), "cc" (l'utilisateur est mentionné en copie, dans une liste de personnes, ou la question s'adresse en fait à quelqu'un d'autre), "all" (@all, annonce, diffusion), "none" (rien pour lui). Dans un espace nommé, seuls "direct" et "reply" comptent pour lui : le reste est au plus "normal". Lis le texte : « @Paul tu es sûr ? cc @Utilisateur » s'adresse à Paul, pas à l'utilisateur.`;
 
 /** The tool calls of one check through the Chat connector, for the window since `since` (ms). */
@@ -168,9 +176,10 @@ function steps({ since, settings, data, open = [], openSince = since, settle }) 
       ? `Étape 3 bis : appelle search_messages avec searchParameters = ${JSON.stringify({ isUnread: true, startTime: wide })} et pageSize = 100 : les messages que l'utilisateur n'a pas encore lus. Un nouvel élément dont aucun message n'est dans cette liste a déjà été lu dans Google Chat : handled = true. Si cette liste a un nextPageToken, ou si la recherche renvoie une erreur, ne conclus rien de la lecture (handled = false).`
       : '',
     settle && open.length
-      ? `Étape 3 ter : vérifie les cartes encore ouvertes (liste plus bas ; leur clé dit la conversation, ou le fil dans un espace) avec les étapes 3${onRead ? ' et 3 bis' : ''} : settled, how = "replied" si l'utilisateur a écrit dans cette conversation (ce fil) après la carte${onRead ? ` ; how = "read" si plus aucun message de cette conversation (ce fil), depuis la carte, n'est dans la liste des non-lus (il l'a lu dans Google Chat). Sans liste des non-lus complète, pas de "read"` : ''}.`
+      ? `Étape 3 ter : vérifie les cartes encore ouvertes (liste plus bas ; leur clé dit la conversation, ou le fil dans un espace) avec les étapes 3${onRead ? ' et 3 bis' : ''} et 4 : settled, how = "replied" si l'utilisateur a écrit dans cette conversation (ce fil) après la carte${onRead ? ` ; how = "read" si plus aucun message de cette conversation (ce fil), depuis la carte, n'est dans la liste des non-lus (il l'a lu dans Google Chat). Sans liste des non-lus complète, pas de "read"` : ''} ; how = "others" si une autre personne y a répondu après la carte et que sa réponse règle la demande (voir « Déjà réglé par quelqu'un d'autre »).`
       : '',
-    `Étape 4 (facultative) : si une demande est ambiguë, lis au plus 3 conversations avec list_messages (conversationId, threadId pour un fil, startTime = ${JSON.stringify(start)}, pageSize = 20). Sinon n'en lis aucune.`,
+    `Étape 4 : pour chaque demande trouvée dans un espace ou une conversation de groupe${settle && open.length ? ', et chaque carte ouverte de ce genre' : ''}, lis la suite avec list_messages (conversationId, threadId pour un fil dans un espace, startTime = le createTime de la demande, pageSize = 20) pour voir si quelqu'un y a déjà répondu ; au plus 6 lectures, les plus récentes d'abord. Les messages directs à deux n'en ont pas besoin (étape 3 suffit). Lis aussi une conversation si une demande est ambiguë.`,
+    OTHERS,
     `Ignore les messages de l'utilisateur, ceux des applications Chat et des robots (sender.userType ≠ HUMAN), et tout message plus ancien que la fenêtre.`,
     MERGE,
     `Pour chaque élément : id = le nom de ressource du message (spaces/…/messages/…), space = spaces/…, thread = spaces/…/threads/… si connu, kind = "dm", "group" ou "space", from = l'expéditeur (nom, puis adresse entre <> si connue), title = le sujet (80 caractères au plus), context = le nom affiché de l'espace (vide pour un message direct, jamais spaces/…), date = le createTime du dernier message, summary = ce qu'on attend de l'utilisateur, url = le lien vers le message s'il est fourni, sinon vide.`,
@@ -186,7 +195,7 @@ function mailSteps({ since }) {
   return [
     `Fenêtre : uniquement les mails reçus depuis ${new Date(since).toISOString()}.`,
     `Étape 1 : appelle search_threads avec query = ${JSON.stringify(query)} et pageSize = 20. Chaque MESSAGE reçu dans la fenêtre est un rappel distinct : « X messaged you on Google Chat while you were away » (message direct) ou « X mentioned you in <espace> while you were away » (@mention dans un espace), ou leurs équivalents en français.`,
-    `Étape 2 : lis au plus 6 de ces fils avec get_thread et messageFormat = "PLAIN_TEXT" : le corps contient la fin de la conversation, messages de l'utilisateur compris. Si l'utilisateur a écrit après la dernière demande, c'est "normal".`,
+    `Étape 2 : lis au plus 6 de ces fils avec get_thread et messageFormat = "PLAIN_TEXT" : le corps contient la fin de la conversation, messages de l'utilisateur compris. Si l'utilisateur a écrit après la dernière demande, c'est "normal". Si une autre personne a déjà répondu et réglé la demande, c'est "normal" aussi.`,
     `Un rappel reprend souvent plusieurs messages courts d'affilée : un seul élément par sujet (même réparti sur plusieurs rappels, personnes ou espaces), jamais un par ligne, count = le nombre de messages regroupés.`,
     `Pour chaque élément : id = le champ id du MESSAGE (le dernier rappel du sujet) tel que search_threads le renvoie (pas celui du fil), space = "", thread = "", kind = "dm" (message direct ou conversation de groupe) ou "space" (mention dans un espace), from = la personne qui a écrit (nom, puis adresse entre <>), title = le sujet de sa demande (80 caractères au plus), context = le nom de l'espace (vide pour un message direct), summary = ce qu'on attend de l'utilisateur sur l'ensemble, url = le viewUrl du message.`,
     TO_ME,
@@ -242,7 +251,7 @@ const def = triage({
     if (/^users\/\d+$/.test(out.me_user || '')) data.meUser = out.me_user;
   },
   // Read or answered in Google Chat: the card goes, and a message already read there never alerts.
-  settle: { how: ['read', 'replied'], onRead: 'Un message lu dans Google Chat compte comme traité' },
+  settle: { how: ['read', 'replied', 'others'], onRead: 'Un message lu dans Google Chat compte comme traité' },
   topics: true,
   adjust,
   steps,

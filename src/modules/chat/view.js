@@ -30,11 +30,11 @@ export default {
     const v = st.voice || {};
     if (v.live) {
       return {
-        dots: [{ color: MIC, pulse: true }],
+        dots: [{ color: MIC, pulse: true, keep: true }], // the mic is open: always shown, even at rest
         text: v.partial ? `« ${v.partial} »` : v.phase === 'speaking' ? 'Gany te répond…' : v.phase === 'thinking' ? 'Gany réfléchit…' : 'En conversation avec Gany',
       };
     }
-    if (v.dictating) return { dots: [{ color: MIC, pulse: true }], text: 'Gany t’écoute…' };
+    if (v.dictating) return { dots: [{ color: MIC, pulse: true, keep: true }], text: 'Gany t’écoute…' };
     return st.busy ? { dots: [{ color: COLOR, pulse: true }], text: 'Gany réfléchit à ta question…' } : null;
   },
 

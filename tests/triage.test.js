@@ -401,3 +401,32 @@ test('ClickUp: a comment, a status, a closed task or a done reminder closes the 
   assert.ok(clickup.settings.find((s) => s.key === 'settle'));
   assert.ok(!clickup.settings.find((s) => s.key === 'settleOnRead'));
 });
+
+test('an analysis alone (nothing to click) is kept on the card and announced', async () => {
+  const analyst = {
+    max: 1,
+    async make({ ctx, prefix, model }) {
+      await ctx.claude.run({ prompt: 'analyse', model, allowedTools: [prefix + 'read'] });
+      return { headline: 'Gany a analysé', ask: 'q', analysis: 'Trouvé dans le fil.', next: 'Répondre', actions: [] };
+    },
+    alert: (it) => ({ actions: [{ label: 'Voir l’analyse', action: 'show', payload: { id: it.id }, primary: true }] }),
+  };
+  const t = harness([{ found: 1, items: [item('a', 'important')] }, { ok: 1 }], {}, undefined, { proposer: analyst });
+  await t.act('refresh');
+  const p = t.state().items[0].proposal;
+  assert.equal(p.analysis, 'Trouvé dans le fil.');
+  assert.deepEqual(p.actions, []);
+  assert.equal(t.alerts[0].actions[0].label, 'Voir l’analyse');
+});
+
+test('something urgent never waits for the analysis: alert first, the proposal lands after', async () => {
+  let release;
+  const slow = { ...replyProposer, make: (c) => new Promise((r) => (release = () => r(replyProposer.make(c)))) };
+  const t = harness([{ found: 1, items: [item('a', 'urgent')] }, { body: 'Oui.' }], {}, undefined, { proposer: slow });
+  await t.act('refresh');
+  assert.equal(t.alerts.length, 1); // already there, without the proposal
+  assert.equal(t.alerts[0].actions, undefined);
+  release();
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(t.state().items[0].proposal.text.value, 'Oui.');
+});
