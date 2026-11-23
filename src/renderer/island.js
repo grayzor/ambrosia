@@ -610,7 +610,9 @@ island.addEventListener('pointerdown', (e) => {
 
 island.addEventListener('pointermove', (e) => {
   if (!press) return;
-  if (e.buttons === 0) return endPress(); // released somewhere we did not hear about
+  // Released somewhere we did not hear about. While dragging, the main process says
+  // when the button is released (it watches it even far from the island): not here.
+  if (e.buttons === 0 && !press.dragging) return endPress();
   if (!press.dragging && Math.abs(e.screenX - press.x) > 5) startDrag();
 });
 
@@ -628,11 +630,11 @@ function startDrag() {
   api.send('drag', 'start');
 }
 
-function endPress() {
+function endPress(fromMain = false) {
   clearTimeout(holdTimer);
   if (!press) return;
   if (press.dragging) {
-    api.send('drag', 'end');
+    if (fromMain !== true) api.send('drag', 'end');
     island.classList.remove('dragging');
     swallowClick = true; // the click that ends a drag is not a click
     setTimeout(() => (swallowClick = false), 80);
@@ -641,9 +643,13 @@ function endPress() {
   lastRest = null;
   if (S.hovered) armRest();
 }
-island.addEventListener('pointerup', endPress);
-island.addEventListener('pointercancel', endPress);
-island.addEventListener('lostpointercapture', endPress);
+island.addEventListener('pointerup', () => endPress());
+island.addEventListener('pointercancel', () => endPress());
+// While dragging, only the release ends it: the pointer may wander anywhere, the island
+// follows its x until then (the main process keeps the mouse and watches the button).
+island.addEventListener('lostpointercapture', () => !press?.dragging && endPress());
+window.addEventListener('pointerup', () => press?.dragging && endPress());
+api.on('drag-end', () => endPress(true));
 island.addEventListener('click', (e) => {
   if (swallowClick) {
     e.stopPropagation();

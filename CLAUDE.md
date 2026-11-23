@@ -138,6 +138,7 @@ Le relais PowerShell de `foreground.js` lit aussi `SHQueryUserNotificationState`
 - Plein écran (vidéo, présentation, jeu) sur l'écran de l'îlot : la page envoie `aside`, la fenêtre se cache tant que rien ne passe le seuil « En réunion ».
 - `setContentProtection` : l'îlot n'apparaît pas dans les partages d'écran ni les enregistrements.
 - Écran (Réglages → Encoche) : principal, suivre la souris, suivre la fenêtre active (1 s d'hystérésis, `DisplayFollower`), écran choisi (`displayId`, core `displays`, débranché → principal). Ne change d'écran qu'une fois replié.
+- Déplacer l’îlot (appui maintenu ou glissé de côté) : une fois le glisser commencé, seul le x du pointeur compte, où qu’il aille, jusqu’au relâchement ; la fenêtre garde la souris pendant ce temps (`drag` → `hovering`), et le relâchement est vu par la page ou, loin de l’îlot, par `foreground.watchButton` (`drag-end`) ; 30 s au plus.
 - Zone de dépôt : bouton déjà tenu en entrant à moins de 120 px de l'îlot = un glisser venu d'ailleurs → la fenêtre prend la souris sur la zone ; l'îlot ne s'ouvre en zone de dépôt (`#drop-hint`) qu'au vrai `dragenter` avec fichiers ; un lien ou du texte → `drop-reject`.
 - Gany : la concentration suit le « Ne pas déranger » de Windows (`logic.dndFocus`, `focusBy: 'dnd'`, 12 h max) sans finir celle lancée à la main. Réglages → Discrétion (`discretion.hideFromCapture`, `fullscreen`, `followDnd`).
 - Dev : `dev/island.html`, boutons « plein écran », « session verrouillée », « fichier qui approche », « Ne pas déranger ».
