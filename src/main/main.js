@@ -183,7 +183,9 @@ function startCursorFeed() {
     const y = p.y - b.y;
     const r = islandRect;
     // A few pixels of slack, and the very top row always counts (mouse slammed to the edge).
-    const inside = r.w > 0 && x >= r.x - 4 && x <= r.x + r.w + 4 && y >= -2 && y <= r.y + r.h + 4;
+    // While the island is being dragged, the pointer is « on it » wherever it goes: the
+    // window keeps the mouse until the button is released (only x moves the island).
+    const inside = !!drag || (r.w > 0 && x >= r.x - 4 && x <= r.x + r.w + 4 && y >= -2 && y <= r.y + r.h + 4);
     if (inside !== hovering) {
       hovering = inside;
       applyMouse();
@@ -212,23 +214,40 @@ function homeX() {
   return Math.round(bounds.x + (bounds.width - WIN_W) / 2);
 }
 
+const DRAG_MAX_MS = 30000; // a drag nobody ended (button release never heard) stops by itself
+
 ipcMain.on('drag', (_e, phase) => {
   if (!island || island.isDestroyed()) return;
   if (phase === 'start') {
     clearTimeout(homeTimer);
     clearInterval(homeAnim);
-    drag = { cursorX: screen.getCursorScreenPoint().x, winX: island.getBounds().x };
+    drag = { cursorX: screen.getCursorScreenPoint().x, winX: island.getBounds().x, at: Date.now() };
+    // The window keeps the mouse wherever the pointer goes (startCursorFeed), and the
+    // Windows watcher tells when the button is released, even far from the island.
+    hovering = true;
+    applyMouse();
+    foreground.watchButton(true);
     clearInterval(dragTimer);
     dragTimer = setInterval(dragStep, 16);
   } else {
-    clearInterval(dragTimer);
-    drag = null;
-    scheduleHome();
+    endDrag();
   }
 });
 
+/** The drag is over (button released, seen by the page or by the watcher). */
+function endDrag(tellPage = false) {
+  if (!drag) return;
+  clearInterval(dragTimer);
+  drag = null;
+  dropNear = false; // the next cursor tick decides hover and the drop zone again
+  foreground.watchButton(false);
+  if (tellPage && island && !island.isDestroyed()) island.webContents.send('drag-end');
+  scheduleHome();
+}
+
 function dragStep() {
   if (!drag || !island || island.isDestroyed()) return;
+  if (Date.now() - drag.at > DRAG_MAX_MS) return endDrag(true);
   const { bounds } = targetDisplay();
   const half = (islandRect.w || 200) / 2 + 12; // the ears stay on screen
   let center = drag.winX + WIN_W / 2 + (screen.getCursorScreenPoint().x - drag.cursorX);
@@ -377,6 +396,7 @@ function setDropArmed(on) {
 }
 
 function watchDrop(pt) {
+  if (drag) return; // moving the island: the watcher is busy with its button
   const near = store.get('island', 'dropZone') !== false && sys.inDropZone(pt, islandRect);
   if (near === dropNear) return;
   dropNear = near;
@@ -386,6 +406,8 @@ function watchDrop(pt) {
 }
 
 function onButton(down) {
+  // Moving the island: the button released, anywhere on the screen, ends it.
+  if (drag) return down ? undefined : endDrag(true);
   if (!dropNear) return;
   if (dropFromAfar === null) dropFromAfar = down;
   else if (down) dropFromAfar = false; // pressed inside the zone: a click, a window drag
